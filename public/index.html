@@ -57,7 +57,7 @@
             <div class="dashboard-grid">
                 <div class="card">
                     <h3>Worked This Week</h3>
-                    <p id="worked-time">Loading</p>
+                    <p id="worked-time">Loading...</p>
                 </div>
                 <div class="card">
                     <h3>Last Worked</h3>
@@ -82,6 +82,23 @@
                 <div class="graph-container">
                     <h3>Activity Graph</h3>
                     <canvas id="activity-chart"></canvas>
+                </div>
+
+                <div class="graph-container">
+                    <h3>Browser Activity</h3>
+                    <div id="browser-activity-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Application</th>
+                                    <th>Time Spent (%)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="browser-activity-table-body">
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -200,7 +217,7 @@
 <div class="floating-timer" id="floating-timer">
     <div class="floating-timer-header" id="floating-timer-header">Drag Timer</div>
     <div class="timer-display" id="floating-timer-display">00:00:00</div>
-    <button id="floating-stop-btn"  onclick="stopTimer(); " >Stop</button>
+    <button id="floating-stop-btn"  onclick="stopTimer();" >Stop</button>
 </div>
 <!-- Web Timer Modal Start Button -->
 
@@ -297,9 +314,9 @@
         // }, 1000);
 
         // Example: Chart.js for activity graph
-        const ctx = document.getElementById('activity-chart').getContext('2d');
+        // const ctx = document.getElementById('activity-chart').getContext('2d');
         
-    fetchProjectCount();
+    
 // });
 
 function fetchProjectCount() {
@@ -312,6 +329,7 @@ function fetchProjectCount() {
             console.error('Error fetching project count:', error);
         });
 }
+fetchProjectCount();
 
     </script>
     <script>
@@ -540,7 +558,7 @@ function formatTime(seconds) {
     async function fetchRecentScreenshots() {
     try {
         // Ensure URL points to the correct local server
-        const response = await fetch('http://localhost:5001/api/recent-screenshots');
+        const response = await fetch('http://localhost:5002/api/recent-screenshots');
         if (!response.ok) throw new Error('Failed to fetch screenshots from server');
 
         const screenshots = await response.json();
@@ -603,7 +621,7 @@ async function fetchLastScreenshot() {
     const userId = 'user123'; // Replace with actual user ID
 
     try {
-        const response = await fetch(`http://localhost:5001/api/last-screenshot/${userId}`);
+        const response = await fetch(`http://localhost:5002/api/last-screenshot/${userId}`);
         const data = await response.json();
 
         if (data.lastScreenshotTime) {
@@ -825,7 +843,7 @@ async function saveActivityData() {
     const activityData = weeklyActivityData[today];
 
     try {
-        const response = await fetch('http://localhost:5001/api/save-activity', {
+        const response = await fetch('http://localhost:5002/api/save-activity', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -850,101 +868,101 @@ async function saveActivityData() {
 
 
 // // Start tracking activity when the timer starts
-// function startActivityTracking() {
-//     mouseEvents = 0;
-//     keyboardEvents = 0;
-//     totalTime = 0;
+function startActivityTracking() {
+    mouseEvents = 0;
+    keyboardEvents = 0;
+    totalTime = 0;
 
-//     // Track every second
-//     activityInterval = setInterval(() => {
-//         totalTime++; // Track total time in seconds
+    // Track every second
+    activityInterval = setInterval(() => {
+        totalTime++; // Track total time in seconds
 
-//         // Periodically (e.g., every minute) send the data to the server
-//         if (totalTime % 60 === 0) {
-//             sendActivityData();
-//         }
+        // Periodically (e.g., every minute) send the data to the server
+        if (totalTime % 60 === 0) {
+            sendActivityData();
+        }
 
-//     }, 1000); // 1-second interval
-// }
+    }, 1000); // 1-second interval
+}
 
-// // Stop tracking activity
-// function stopActivityTracking() {
-//     clearInterval(activityInterval);
-//     sendActivityData(); // Send the final activity data
-// }
+// Stop tracking activity
+function stopActivityTracking() {
+    clearInterval(activityInterval);
+    sendActivityData(); // Send the final activity data
+}
 
-// // Function to calculate percentages and send activity data to the server
-// function sendActivityData() {
-//     const mouseUsagePercentage = (mouseEvents / totalTime) * 100;
-//     const keyboardUsagePercentage = (keyboardEvents / totalTime) * 100;
+// Function to calculate percentages and send activity data to the server
+function sendActivityData() {
+    const mouseUsagePercentage = (mouseEvents / totalTime) * 100;
+    const keyboardUsagePercentage = (keyboardEvents / totalTime) * 100;
 
-//     fetch('https://actracker.onrender.com/api/save-activity', {
-//         method: 'POST',
-//         headers: {
-//             'Content-Type': 'application/json',
-//         },
-//         body: JSON.stringify({
-//             userId: 'user123', // Replace with actual user ID
-//             projectId: document.getElementById('project-select').value,
-//             mouseEvents: mouseEvents,
-//             keyboardEvents: keyboardEvents,
-//             totalTime: totalTime,
-//             mouseUsagePercentage: mouseUsagePercentage.toFixed(2),
-//             keyboardUsagePercentage: keyboardUsagePercentage.toFixed(2),
-//         }),
-//     })
-//     .then(response => response.json())
-//     .then(data => console.log('Activity data saved:', data))
-//     .catch(error => console.error('Error saving activity data:', error));
+    fetch('https://actracker.onrender.com/api/save-activity', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            userId: 'user123', // Replace with actual user ID
+            projectId: document.getElementById('project-select').value,
+            mouseEvents: mouseEvents,
+            keyboardEvents: keyboardEvents,
+            totalTime: totalTime,
+            mouseUsagePercentage: mouseEvents.toFixed(2),
+            keyboardUsagePercentage: keyboardEvents.toFixed(2),
+        }),
+    })
+    .then(response => response.json())
+    .then(data => console.log('Activity data saved:', data))
+    .catch(error => console.error('Error saving activity data:', error));
 
-//     // Reset mouse and keyboard event counts for the next interval
-//     mouseEvents = 0;
-//     keyboardEvents = 0;
-// }
-// function fetchActivityData() {
-//     const projectId = document.getElementById('project-select').value;
-//     fetch(`https://actracker.onrender.com/api/get-activity/${projectId}`)
-//         .then(response => response.json())
-//         .then(data => {
-//             const labels = data.map(entry => new Date(entry.date).toLocaleTimeString());
-//             const mouseUsage = data.map(entry => entry.mouseUsagePercentage);
-//             const keyboardUsage = data.map(entry => entry.keyboardUsagePercentage);
+    // Reset mouse and keyboard event counts for the next interval
+    mouseEvents = 0;
+    keyboardEvents = 0;
+}
+function fetchActivityData() {
+    const projectId = document.getElementById('project-select').value;
+    fetch(`http://localhost:5002/api/get-activity/${projectId}`)
+        .then(response => response.json())
+        .then(data => {
+            const labels = data.map(entry => new Date(entry.date).toLocaleTimeString());
+            const mouseUsage = data.map(entry => entry.mouseUsagePercentage);
+            const keyboardUsage = data.map(entry => entry.keyboardUsagePercentage);
 
-//             // Create the activity chart
-//             const ctx = document.getElementById('activity-chart').getContext('2d');
-//             const activityChart = new Chart(ctx, {
-//                 type: 'line',
-//                 data: {
-//                     labels: labels, // Time labels for x-axis
-//                     datasets: [{
-//                         label: 'Mouse Usage (%)',
-//                         data: mouseUsage,
-//                         borderColor: 'rgba(75, 192, 192, 1)',
-//                         borderWidth: 1,
-//                         fill: false,
-//                     }, {
-//                         label: 'Keyboard Usage (%)',
-//                         data: keyboardUsage,
-//                         borderColor: 'rgba(192, 75, 75, 1)',
-//                         borderWidth: 1,
-//                         fill: false,
-//                     }]
-//                 },
-//                 options: {
-//                     scales: {
-//                         y: {
-//                             beginAtZero: true,
-//                             max: 100, // Limit the y-axis to 100%
-//                         }
-//                     }
-//                 }
-//             });
-//         })
-//         .catch(error => console.error('Error fetching activity data:', error));
-// }
+            // Create the activity chart
+            const ctx = document.getElementById('activity-chart').getContext('2d');
+            const activityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels, // Time labels for x-axis
+                    datasets: [{
+                        label: 'Mouse Usage (%)',
+                        data: mouseUsage,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1,
+                        fill: false,
+                    }, {
+                        label: 'Keyboard Usage (%)',
+                        data: keyboardUsage,
+                        borderColor: 'rgba(192, 75, 75, 1)',
+                        borderWidth: 1,
+                        fill: false,
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100, // Limit the y-axis to 100%
+                        }
+                    }
+                }
+            });
+        })
+        // .catch(error => console.error('Error fetching activity data:', error));
+}
 
-// // Call this function when the page loads or when a project is selected
-// fetchActivityData();
+// Call this function when the page loads or when a project is selected
+fetchActivityData();
 
 // Function to update the activity graph
 function updateActivityGraph() {
@@ -1111,7 +1129,7 @@ function createActivityGraph(labels, mouseUsage, keyboardUsage) {
             scales: {
                 y: {
                     beginAtZero: true,
-                    max: 1000, // Limit the y-axis to 100%
+                    max: 3000, // Limit the y-axis to 100%
                     title: {
                         display: true,
                         text: 'Usage Percentage (%)'
@@ -1135,8 +1153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchActivityThisWeek();   // Fetch activity data for the current week and display graph
 });
 
-</script>
-<script>
+
        // Function to capture a screenshot via Electron
 async function captureScreenshot() {
     try {
@@ -1161,33 +1178,6 @@ async function captureScreenshot() {
     }
 }
 
-
-        // Function to load and display recent screenshots from S3
-        async function loadRecentScreenshots() {
-            const container = document.getElementById('recent-screenshots');
-            container.innerHTML = '';  // Clear previous screenshots
-
-            try {
-                const result = await window.electronAPI.fetchRecentScreenshots();
-                if (result.success) {
-                    result.screenshots.forEach(screenshot => {
-                        const img = document.createElement('img');
-                        img.src = screenshot.url;
-                        img.alt = `Screenshot taken at ${new Date(screenshot.timestamp).toLocaleString()}`;
-                        img.style.width = '150px';  // Set desired width for each screenshot
-                        img.style.height = '100px';  // Set desired height
-                        container.appendChild(img);
-                    });
-                } else {
-                    console.error('Error fetching screenshots:', result.error);
-                }
-            } catch (error) {
-                console.error('Error loading recent screenshots:', error);
-            }
-        }
-
-        // Load recent screenshots on page load
-        window.addEventListener('DOMContentLoaded', loadRecentScreenshots);
 
 
         // Add this to your renderer JavaScript file (where your timer logic is)
@@ -1244,8 +1234,7 @@ window.addEventListener('beforeunload', () => {
         window.electronAPI.removeScreenshotListeners();
     }
 });
-</script>
-<script>
+
     function toggleSidebar() {
     const sidebar = document.querySelector('.sidebar');
     const content = document.querySelector('.dashboard-content');
@@ -1267,6 +1256,103 @@ document.addEventListener('DOMContentLoaded', () => {
         content.classList.add('collapsed');
     }
 });
+function stopTracking() {
+    const totalEvents = mouseEvents + keyboardEvents || 1;  // Ensure no division by zero
+    const mouseUsagePercentage = (mouseEvents / totalEvents) * 100;
+    const keyboardUsagePercentage = (keyboardEvents / totalEvents) * 100;
+
+    // Send data to main process
+    window.electronAPI.send('stop-tracking', {
+        mouseUsagePercentage: mouseUsagePercentage.toFixed(2),
+        keyboardUsagePercentage: keyboardUsagePercentage.toFixed(2),
+        mouseEvents,
+        keyboardEvents
+    });
+
+    // Reset counters
+    mouseEvents = 0;
+    keyboardEvents = 0;
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const startTimerBtn = document.getElementById('start-timer-btn');
+    const stopTimerBtn = document.getElementById('floating-stop-btn');
+    
+    // Start button logic
+    startTimerBtn.addEventListener('click', () => {
+        window.electronAPI.startTrackingBrowserActivity(); // Start tracking browser activity
+        startTimer(); // Existing function to start the timer
+    });
+    
+    // Stop button logic
+    stopTimerBtn.addEventListener('click', () => {
+        window.electronAPI.stopTrackingBrowserActivity(); // Stop tracking browser activity
+        stopTimer(); // Existing function to stop the timer
+        updateBrowserActivityTable(); // Update the table with the final data
+    });
+
+    // Update Browser Activity table whenever activity data is received
+    window.electronAPI.onBrowserActivityUpdated((activityData) => {
+        updateBrowserActivityTable(activityData);
+    });
+});
+
+// function updateBrowserActivityTable(activityData = []) {
+//     const tableBody = document.getElementById('browser-activity-table-body');
+//     tableBody.innerHTML = '';
+
+//     activityData.forEach(activity => {
+//         const row = document.createElement('tr');
+//         row.innerHTML = `
+//             <td>${activity.url}</td>
+//             <td>${activity.timeSpent}%</td>
+//         `;
+//         tableBody.appendChild(row);
+//     });
+// }
+</script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const startTimerBtn = document.getElementById('start-timer-btn');
+        const stopTimerBtn = document.getElementById('floating-stop-btn');
+        const userId = 'user123'; // Replace with actual user ID
+        const projectId = '$projectId'; // Replace with actual project ID
+        
+        startTimerBtn.addEventListener('click', () => {
+            window.electronAPI.startTrackingBrowserActivity();
+            startTimer();
+        });
+        
+        stopTimerBtn.addEventListener('click', () => {
+            window.electronAPI.stopTrackingBrowserActivity(userId, projectId);
+            stopTimer();
+        });
+    
+        window.electronAPI.onBrowserActivityUpdated((activityData) => {
+            updateBrowserActivityTable(activityData);
+        });
+
+          // Request initial data on load
+         window.electronAPI.getRecentActivities();
+    });
+    
+    function updateBrowserActivityTable(activityData = []) {
+        const tableBody = document.getElementById('browser-activity-table-body');
+        tableBody.innerHTML = '';
+    
+        activityData.forEach(activity => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${activity.title}</td>
+                <td>${activity.application}</td>
+                <td>${activity.timeSpentPercentage.toFixed(2)}%</td>
+            `;
+            tableBody.appendChild(row);
+        });
+    }
+    </script>
+    
+
 </script>
 </body>
 </html>

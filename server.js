@@ -13,7 +13,7 @@ require('dotenv').config();
 
 
 const app = express();
-const PORT = 5001;
+const PORT = 5002;
 
 // AWS S3 Configuration
 const s3 = new AWS.S3({
@@ -658,4 +658,45 @@ app.get('/api/last-screenshot/:userId', async (req, res) => {
         res.status(500).json({ message: 'Error fetching last screenshot', details: error.message });
     }
 });
+
+
+// Endpoint to retrieve recent screenshots
+app.get('/api/recent-screenshots', async (req, res) => {
+    try {
+        const params = {
+            Bucket: bucketName,
+            Prefix: 'screenshots/', // Adjust if your folder structure is different
+        };
+
+        const data = await s3.listObjectsV2(params).promise();
+
+        if (!data.Contents || data.Contents.length === 0) {
+            return res.status(404).json({ message: 'No screenshots found' });
+        }
+
+        // Map screenshots to include key for deletion
+        const screenshots = data.Contents.map(item => ({
+            url: `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`,
+            key: item.Key,
+            timestamp: item.LastModified
+        }));
+
+        res.status(200).json(screenshots);
+    } catch (error) {
+        console.error('Error fetching screenshots:', error.message);
+        res.status(500).json({ message: 'Error fetching screenshots', error: error.message });
+    }
+});
+const browserActivitiesSchema = new mongoose.Schema({
+    userId: String,
+    projectId: String,
+    title: String,
+    application: String,
+    timeSpentPercentage: Number, // Percentage of time spent on the URL during tracking
+    date: { type: Date, default: Date.now }
+});
+
+const browserActivities = mongoose.model('browserActivities', browserActivitiesSchema);
+
+module.exports = { browserActivities };
 
