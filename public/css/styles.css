@@ -1178,3 +1178,32 @@ tr:hover {
     }
 }
 
+.gallery-container {
+    padding: 20px;
+    text-align: center;
+}
+
+#screenshot-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    align-items: center;
+}
+
+.screenshot-item {
+    border: 1px solid #ccc;
+    padding: 10px;
+    text-align: center;
+    width: 220px;
+}
+
+.screenshot-item img {
+    max-width: 100%;
+    height: auto;
+}
+
+h3 {
+    margin-top: 20px;
+    font-size: 1.2em;
+    color: #333;
+}

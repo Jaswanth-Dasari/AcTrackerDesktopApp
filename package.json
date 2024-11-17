@@ -2,7 +2,7 @@
   "name": "desktopapplication",
   "version": "1.0.0",
   "description": "",
-  "main": "main.js",
+  "main": "main.mjs",
   "scripts": {
     "start": "concurrently \"electron .\" \"node server.js\"",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "active-win": "^9.0.0",
     "aws-sdk": "^2.1691.0",
     "axios": "^1.7.7",
     "cors": "^2.8.5",
@@ -19,6 +20,7 @@
     "express": "^4.21.1",
     "mongoose": "^8.7.3",
     "multer": "^1.4.5-lts.1",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.16",
     "screenshot-desktop": "^1.15.0",
     "socket.io": "^4.8.1"
