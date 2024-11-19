@@ -36,7 +36,7 @@ function createWindow() {
     });
 
     win.loadFile(path.join(__dirname, 'public', 'index.html'));
-    win.webContents.openDevTools();
+   
 }
 
 // Capture screenshot and upload to AWS S3

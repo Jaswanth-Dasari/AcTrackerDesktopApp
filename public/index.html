@@ -558,7 +558,7 @@ function formatTime(seconds) {
     async function fetchRecentScreenshots() {
     try {
         // Ensure URL points to the correct local server
-        const response = await fetch('http://localhost:5002/api/recent-screenshots');
+        const response = await fetch('https://actracker.onrender.com/api/recent-screenshots');
         if (!response.ok) throw new Error('Failed to fetch screenshots from server');
 
         const screenshots = await response.json();
@@ -621,7 +621,7 @@ async function fetchLastScreenshot() {
     const userId = 'user123'; // Replace with actual user ID
 
     try {
-        const response = await fetch(`http://localhost:5002/api/last-screenshot/${userId}`);
+        const response = await fetch(`https://actracker.onrender.com/api/last-screenshot/${userId}`);
         const data = await response.json();
 
         if (data.lastScreenshotTime) {
@@ -843,7 +843,7 @@ async function saveActivityData() {
     const activityData = weeklyActivityData[today];
 
     try {
-        const response = await fetch('http://localhost:5002/api/save-activity', {
+        const response = await fetch('https://actracker.onrender.com/api/save-activity', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -921,7 +921,7 @@ function sendActivityData() {
 }
 function fetchActivityData() {
     const projectId = document.getElementById('project-select').value;
-    fetch(`http://localhost:5002/api/get-activity/${projectId}`)
+    fetch(`https://actracker.onrender.com/api/get-activity/${projectId}`)
         .then(response => response.json())
         .then(data => {
             const labels = data.map(entry => new Date(entry.date).toLocaleTimeString());

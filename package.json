@@ -1,14 +1,22 @@
 {
-  "name": "desktopapplication",
+  "name": "AcTracker",
   "version": "1.0.0",
-  "description": "",
+  "description": "A desktop application to track and manage activities efficiently.",
   "main": "main.mjs",
   "scripts": {
     "start": "concurrently \"electron .\" \"node server.js\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win --x64",
+    "mac": "electron-builder --mac",
+    "linux": "electron-builder --linux"
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "Dasari Jaswanth",
+    "email": "jaswanthdasari718@gmail.com",
+    "url": "https://actracker.onrender.com"
+  },
   "license": "ISC",
   "dependencies": {
     "active-win": "^9.0.0",
@@ -16,8 +24,8 @@
     "axios": "^1.7.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "electron": "^33.0.2",
     "express": "^4.21.1",
+    "express-session": "^1.18.1",
     "mongoose": "^8.7.3",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^3.3.2",
@@ -26,6 +34,28 @@
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "concurrently": "^9.0.1"
+    "concurrently": "^9.0.1",
+    "electron": "^33.0.2",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+  "appId": "com.dasari.actracker",
+  "productName": "AcTracker",
+  "win": {
+    "target": "nsis",
+    "icon": "build/icon.ico",
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": true,
+    "allowElevation": true,
+    "createDesktopShortcut": true
+  },
+    "mac": {
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }
