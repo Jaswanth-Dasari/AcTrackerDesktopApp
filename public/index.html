@@ -251,7 +251,7 @@
         // Function to close modal
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
-            resetTimer(); // Reset timer when closing the web timer modal
+            // resetTimer(); // Reset timer when closing the web timer modal
         }
 
         // Function to switch between tabs
@@ -269,14 +269,7 @@
             event.currentTarget.classList.add('active');
         }
 
-        // Timer functions
-        function toggleTimer() {
-            if (isTimerRunning) {
-                pauseTimer();
-            } else {
-                startTimer();
-            }
-        }
+       
 
         function saveDetails() {
             const projectName = document.getElementById('project-name').value;
@@ -442,6 +435,16 @@ function startTimer() {
     // Display the floating timer
     document.getElementById('floating-timer').style.display = 'block';
 
+    // Prevent multiple intervals from being created
+    if (isTimerRunning) {
+        clearInterval(timerInterval);
+        clearInterval(screenshotInterval);
+    }
+
+    // Reset the timer state
+    secondsElapsed = 0;
+    document.getElementById('floating-timer-display').innerText = formatTime(secondsElapsed);
+
     // Start counting seconds for the timer
     isTimerRunning = true;
     timerInterval = setInterval(() => {
@@ -454,6 +457,7 @@ function startTimer() {
         captureScreenshot();
     }, 10000); // 10000ms = 10 seconds
 }
+
 
 function stopTimer() {
     if (isTimerRunning) {
@@ -495,12 +499,12 @@ function stopTimer() {
     }
 }
 // Call stopTimer when the page unloads (user refreshes or navigates away)
-window.addEventListener('beforeunload', (event) => {
-    stopTimer();
-    stopContinuousScreenshot(); // Stop continuous screenshot capturing
-    // Optionally trigger confirmation dialog on most browsers
-    event.returnValue = ''; // Display a confirmation dialog on certain browsers
-});    
+// window.addEventListener('beforeunload', (event) => {
+//     stopTimer();
+//     stopContinuousScreenshot(); // Stop continuous screenshot capturing
+//     // Optionally trigger confirmation dialog on most browsers
+//     event.returnValue = ''; // Display a confirmation dialog on certain browsers
+// });    
 
 
 function pauseTimer() {
@@ -867,23 +871,7 @@ async function saveActivityData() {
 
 
 
-// // Start tracking activity when the timer starts
-function startActivityTracking() {
-    mouseEvents = 0;
-    keyboardEvents = 0;
-    totalTime = 0;
 
-    // Track every second
-    activityInterval = setInterval(() => {
-        totalTime++; // Track total time in seconds
-
-        // Periodically (e.g., every minute) send the data to the server
-        if (totalTime % 60 === 0) {
-            sendActivityData();
-        }
-
-    }, 1000); // 1-second interval
-}
 
 // Stop tracking activity
 function stopActivityTracking() {
