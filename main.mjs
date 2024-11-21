@@ -8,6 +8,9 @@ import { browserActivities } from './server.js';
 import { activeWindow } from 'active-win'; // Import `activeWindow` directly
 import { fileURLToPath } from 'url';
 
+
+
+
 // Load environment variables
 dotenv.config();
 
@@ -27,6 +30,7 @@ function createWindow() {
     const win = new BrowserWindow({
         width: 1200,
         height: 800,
+        icon : "public/Actracker_Icon.ico",
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -36,15 +40,19 @@ function createWindow() {
     });
 
     win.loadFile(path.join(__dirname, 'public', 'index.html'));
-    win.webContents.openDevTools();
+   
 }
 
 // Capture screenshot and upload to AWS S3
 ipcMain.handle('capture-screenshot', async () => {
     try {
+        // console.log('Attempting to capture screenshot...');
         const timestamp = new Date();
+
+        // Capture screenshot using `screenshot-desktop`
         const img = await screenshot({ format: 'png' });
 
+        // console.log('Screenshot captured, uploading to S3...');
         const data = await s3.upload({
             Bucket: bucketName,
             Key: `screenshots/screenshot-${timestamp.toISOString()}.png`,
@@ -53,12 +61,14 @@ ipcMain.handle('capture-screenshot', async () => {
             Metadata: { timestamp: timestamp.toISOString() }
         }).promise();
 
-        return { success: true, url: data.Location, timestamp: timestamp.toISOString() };
+        console.log('Screenshot uploaded to S3:', data.Location);
+        // return { success: true, url: data.Location, timestamp: timestamp.toISOString() };
     } catch (error) {
         console.error('Error capturing screenshot or uploading:', error);
         return { success: false, error: error.message };
     }
 });
+
 
 // Fetch recent screenshots from the server
 ipcMain.handle('fetch-recent-screenshots', async () => {
