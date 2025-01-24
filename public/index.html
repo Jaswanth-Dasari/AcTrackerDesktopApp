@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AcTracker - Time Tracking App</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Timer Section -->
+        <div class="timer-section">
+            <div class="total-hours-today">
+                <h3>Total hours today</h3>
+                <div class="timer-display">23:59:59</div>
+                <button class="play-button">
+                    <i class="fas fa-play"></i>
+                            </button>
+                <div class="project-info">
+                    <p class="no-project">No Project Selected</p>
+                    <p class="no-task">No Task Selected</p>
+                                    </div>
+                <div class="elapsed-time">00:00:00</div>
+                <button class="complete-task-btn">Complete Task</button>
+                                    </div>
+            <!-- Add profile section -->
+            <div class="profile-controls">
+                <button class="profile-button" onclick="toggleProfileMenu(event)">
+                    <span id="user-initial"></span>
+                </button>
+                <div id="profileMenu" class="profile-menu">
+                    <div class="profile-info">
+                        <div class="profile-avatar">
+                            <span id="profile-initial"></span>
+                        </div>
+                        <div class="profile-details">
+                            <p id="profile-full-name"></p>
+                            <p id="profile-email"></p>
+                            <p id="profile-user-id"></p>
+                        </div>
+                    </div>
+                    <button class="logout-button" onclick="window.auth.logout()">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Content Section -->
+        <div class="content-section">
+            <div class="recent-activity">
+                <h3>Recent activity</h3>
+                <div class="activity-period">90 days</div>
+                
+                <div class="activity-stats">
+                    <div class="stat-card">
+                        <i class="fas fa-clock"></i>
+                        <h4>Total Hours</h4>
+                        <p>00:00:00</p>
+                                </div>
+                    <div class="stat-card">
+                        <i class="fas fa-dollar-sign"></i>
+                        <h4>Total Earned</h4>
+                        <p>$0</p>
+                            </div>
+                    <div class="stat-card">
+                        <i class="fas fa-tag"></i>
+                        <h4>Unit Price</h4>
+                        <p>$0</p>
+                        </div>
+                    <div class="stat-card">
+                        <i class="fas fa-tasks"></i>
+                        <h4>Total Tasks</h4>
+                        <p>0</p>
+                    </div>
+                </div>
+
+                <div class="task-section">
+                    <div class="task-header">
+                        <div class="search-bar">
+                            <input type="text" placeholder="Search for tasks">
+                            <i class="fas fa-filter"></i>
+                        </div>
+                        <button class="add-task-btn">
+                            <i class="fas fa-plus"></i>
+                            Add Task
+                    </button>
+                </div>
+                
+                    <div class="task-table">
+                        <div class="table-header">
+                            <div class="header-cell">Task Name</div>
+                            <div class="header-cell">Project</div>
+                            <div class="header-cell">Deadline</div>
+                            <div class="header-cell">Priority</div>
+                            <div class="header-cell">Time Logged</div>
+                            <div class="header-cell">Status</div>
+                </div>
+                        <div class="table-body">
+                            <!-- Tasks will be dynamically added here -->
+                            <div class="empty-state">
+                                <img src="assets/empty-state.svg" alt="No tasks">
+                                <p>Ready to get organized? Let's create your first task!</p>
+                                <button class="add-task-btn">Add Task</button>
+                    </div>
+                </div>
+            </div>
+
+                    <div class="pagination">
+                        <button class="first-page" title="First Page"><i class="fas fa-angle-double-left"></i></button>
+                        <button class="prev-page" title="Previous Page"><i class="fas fa-angle-left"></i></button>
+                        <div class="page-numbers">
+                            <button class="active">1</button>
+                            <button>2</button>
+                            <button>3</button>
+                            <button>4</button>
+                            <span>...</span>
+                            <button>10</button>
+                </div>
+                        <button class="next-page" title="Next Page"><i class="fas fa-angle-right"></i></button>
+                        <button class="last-page" title="Last Page"><i class="fas fa-angle-double-right"></i></button>
+            </div>
+        </div>
+    </div>
+        </div>
+            </div>
+
+    <!-- Add Task Modal -->
+    <div id="add-task-modal" class="modal">
+        <div class="modal-header">
+            <h2><i class="fas fa-plus"></i> Add Task</h2>
+            <div class="header-actions">
+                <button type="button" title="Help"><i class="fas fa-question-circle"></i></button>
+                <button type="button" title="More options"><i class="fas fa-ellipsis-v"></i></button>
+                <button type="button" class="close-modal" title="Close"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+        <form id="add-task-form">
+    <div class="modal-content">
+                <!-- Task Title -->
+                <div class="form-group required">
+                    <label for="task-title">Task Title</label>
+                    <input type="text" id="task-title" name="task-title" placeholder="Enter task title" required>
+                </div>
+
+                <!-- Project Selection -->
+                <div class="form-group required">
+                    <label for="project">Project</label>
+                    <select id="project" name="project" required>
+                        <option value="">Select project</option>
+                    </select>
+                </div>
+        
+                <!-- People Section -->
+                <div class="people-section">
+                    <div class="people-group">
+                        <label>
+                            <i class="fas fa-user"></i>
+                            Assignees
+                        </label>
+                        <div class="avatar-group">
+                            <button type="button" class="add-person" title="Add assignee">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="people-group">
+                        <label>
+                            <i class="fas fa-users"></i>
+                            Followers
+                        </label>
+                        <div class="avatar-group">
+                            <button type="button" class="add-person" title="Add follower">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Sprint and Epic -->
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="sprint">Sprint</label>
+                        <select id="sprint" name="sprint">
+                            <option value="">Select Sprint</option>
+                            <option value="sprint1">Sprint 1</option>
+                            <option value="sprint2">Sprint 2</option>
+                            <option value="sprint3">Sprint 3</option>
+                            <option value="backlog">Backlog</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="epic">Epic</label>
+                        <select id="epic" name="epic">
+                            <option value="">Select Epic</option>
+                            <option value="epic1">Feature Development</option>
+                            <option value="epic2">Bug Fixes</option>
+                            <option value="epic3">Documentation</option>
+                            <option value="epic4">Testing</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Description -->
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" name="description" placeholder="Briefly describe the task"></textarea>
+                </div>
+                
+                <!-- Labels -->
+                <div class="labels-section">
+                    <label>Labels</label>
+                    <button type="button" class="add-label">
+                        <i class="fas fa-plus"></i>
+                        Add a label
+                    </button>
+                </div>
+                
+                <!-- Dependencies -->
+                <div class="dependencies-section">
+                    <label>Dependencies</label>
+                    <a href="#" class="link-task">Link a task</a>
+                </div>
+                
+                <!-- Attachments -->
+                <div class="attachments-section">
+                    <label>Attachments</label>
+                    <div class="upload-area">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Click or drag files here to upload</p>
+                    </div>
+                </div>
+
+                <!-- Recurring Task -->
+                <div class="recurring-section">
+                    <div class="recurring-toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" name="recurring" id="recurring-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Recurring Task?</span>
+                    </div>
+                    
+                    <!-- Until Date - Only visible when recurring is checked -->
+                    <div class="form-group recurring-fields" style="display: none;">
+                        <label for="until-date">Repeat Until</label>
+                        <input type="date" id="until-date" name="until-date">
+                    </div>
+                    
+                    <!-- Days Selection - Only visible when recurring is checked -->
+                    <div class="days-selection recurring-fields" style="display: none;">
+                        <label>Repeat On</label>
+                        <div class="days-container">
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="monday" disabled>
+                                <span>M</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="tuesday" disabled>
+                                <span>T</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="wednesday" disabled>
+                                <span>W</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="thursday" disabled>
+                                <span>T</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="friday" disabled>
+                                <span>F</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="saturday" disabled>
+                                <span>S</span>
+                            </label>
+                            <label class="day-checkbox">
+                                <input type="checkbox" name="days" value="sunday" disabled>
+                                <span>S</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dates and Times -->
+                <div class="form-grid">
+                    <div class="form-group required">
+                        <label for="startDate">Start Date</label>
+                        <input type="date" id="startDate" name="startDate" required>
+                    </div>
+                    <div class="form-group required">
+                        <label for="dueDate">Due Date</label>
+                        <input type="date" id="dueDate" name="dueDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="worked">Hours Worked</label>
+                        <input type="number" id="worked" name="worked" placeholder="0" min="0" step="0.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="estimate">Estimated Hours</label>
+                        <input type="number" id="estimate" name="estimate" placeholder="0" min="0" step="0.5">
+                    </div>
+                </div>
+
+                <!-- Task Status -->
+                <div class="form-group required">
+                    <label for="task-status">Status</label>
+                    <select id="task-status" name="task-status" required>
+                        <option value="Not Started">Not Started</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Completed">Completed</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-outline" name="action" value="saveAndAdd">Save & Add another</button>
+                <button type="submit" class="btn btn-primary" name="action" value="save">Save Task</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/profile.js"></script>
+    <script src="js/recordings.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

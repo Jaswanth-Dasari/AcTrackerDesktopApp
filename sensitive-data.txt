@@ -1,0 +1,5 @@
+AKIANQNIYDNXHOIGO
+(?s)aws_access_key_id.*
+(?s)AWS_ACCESS_KEY_ID.*
+(?s)aws_secret_access_key.*
+(?s)AWS_SECRET_ACCESS_KEY.* 

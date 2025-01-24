@@ -1,0 +1,17 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "PublicReadGetObject",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": [
+                "arn:aws:s3:::time-tracking-persist-ventures/desktop-app/*",
+                "arn:aws:s3:::time-tracking-persist-ventures/screenshots/*",
+                "arn:aws:s3:::time-tracking-persist-ventures/recordings/*",
+                "arn:aws:s3:::time-tracking-persist-ventures/gifs/*"
+            ]
+        }
+    ]
+}
