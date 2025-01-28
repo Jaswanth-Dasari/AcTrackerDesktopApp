@@ -74,11 +74,11 @@ const taskSchema = new mongoose.Schema({
     description: String,
     status: { type: String, default: 'Not Started' },
     priority: { type: String, default: 'High' },
+    sprint: { type: String },
+    epic: { type: String },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
     metadata: {
-        sprint: String,
-        epic: String,
         labels: [String],
         dependencies: [String],
         attachments: [String]
@@ -280,12 +280,10 @@ app.post('/api/tasks/create', authenticateToken, async (req, res) => {
         const finalProjectId = projectDetails.projectId || projectId;
         const finalProjectName = projectDetails.projectName || 'No Project';
 
-        // Parse metadata fields
+        // Parse metadata fields with sprint and epic
         const parsedMetadata = {
             sprint: sprint || null,
-            sprintName: req.body.sprintName || null,
             epic: epic || null,
-            epicName: req.body.epicName || null,
             labels: Array.isArray(labels) ? labels : [],
             dependencies: Array.isArray(dependencies) ? dependencies : [],
             attachments: Array.isArray(attachments) ? attachments : []
@@ -297,7 +295,9 @@ app.post('/api/tasks/create', authenticateToken, async (req, res) => {
             timing: parsedTiming,
             recurring: parsedRecurring,
             priority: calculatedPriority,
-            metadata: parsedMetadata
+            metadata: parsedMetadata,
+            sprint,
+            epic
         });
 
         const task = new Task({
@@ -308,6 +308,8 @@ app.post('/api/tasks/create', authenticateToken, async (req, res) => {
             description,
             status,
             priority: calculatedPriority,
+            sprint,
+            epic,
             metadata: parsedMetadata,
             timing: parsedTiming,
             recurring: parsedRecurring,
@@ -492,6 +494,314 @@ function formatTime(totalSeconds) {
     const seconds = totalSeconds % 60;
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
+
+// User-specific API endpoints
+
+// Get user's total tasks count
+app.get('/api/users/:userId/tasks/count', authenticateToken, async (req, res) => {
+    try {
+        const count = await Task.countDocuments({ userId: req.params.userId });
+        res.json({ count });
+    } catch (error) {
+        console.error('Error counting tasks:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's total hours worked (all time)
+app.get('/api/users/:userId/total-hours', authenticateToken, async (req, res) => {
+    try {
+        const dailyTimes = await DailyTime.find({ userId: req.params.userId });
+        const totalSeconds = dailyTimes.reduce((acc, curr) => acc + (curr.totalSeconds || 0), 0);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        
+        res.json({
+            totalSeconds,
+            formatted: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+        });
+    } catch (error) {
+        console.error('Error calculating total hours:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's hours worked today
+app.get('/api/users/:userId/hours-today', authenticateToken, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const dailyTime = await DailyTime.findOne({
+            userId: req.params.userId,
+            date: {
+                $gte: today,
+                $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+            }
+        });
+
+        const totalSeconds = dailyTime ? dailyTime.totalSeconds : 0;
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        res.json({
+            totalSeconds,
+            formatted: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+        });
+    } catch (error) {
+        console.error('Error calculating today\'s hours:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's recent screenshots
+app.get('/api/users/:userId/screenshots', authenticateToken, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const userId = req.params.userId;
+
+        // Log the search parameters
+        console.log('Fetching screenshots for:', {
+            userId,
+            bucketName,
+            prefix: `screenshots/${userId}/`
+        });
+
+        const params = {
+            Bucket: bucketName,
+            Prefix: `screenshots/${userId}/`
+        };
+
+        const data = await s3.listObjectsV2(params).promise();
+        
+        // Log the S3 response
+        console.log('S3 Response:', {
+            found: !!data.Contents,
+            totalItems: data.Contents ? data.Contents.length : 0,
+            keyPrefix: `screenshots/${userId}/`
+        });
+
+        if (!data.Contents || data.Contents.length === 0) {
+            // Try without user ID subfolder
+            const altParams = {
+                Bucket: bucketName,
+                Prefix: 'screenshots/'
+            };
+            
+            const altData = await s3.listObjectsV2(altParams).promise();
+            
+            // Log alternative search results
+            console.log('Alternative S3 Search:', {
+                found: !!altData.Contents,
+                totalItems: altData.Contents ? altData.Contents.length : 0
+            });
+
+            // Filter for this user's screenshots if they exist
+            const userScreenshots = altData.Contents ? 
+                altData.Contents.filter(item => {
+                    // Check if the key contains the user ID in any format
+                    return item.Key.includes(userId);
+                }) : [];
+
+            if (userScreenshots.length > 0) {
+                const screenshots = userScreenshots
+                    .map(item => ({
+                        url: `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`,
+                        timestamp: item.LastModified,
+                        key: item.Key
+                    }))
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, limit);
+
+                return res.json({ 
+                    screenshots,
+                    debug: {
+                        searchPath: 'screenshots/',
+                        totalFound: userScreenshots.length,
+                        userIdMatch: userId
+                    }
+                });
+            }
+
+            return res.json({ 
+                screenshots: [],
+                debug: {
+                    searchPath: `screenshots/${userId}/`,
+                    altSearchPath: 'screenshots/',
+                    reason: 'No screenshots found for this user',
+                    userId: userId
+                }
+            });
+        }
+
+        const screenshots = data.Contents
+            .map(item => ({
+                url: `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`,
+                timestamp: item.LastModified,
+                key: item.Key
+            }))
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, limit);
+
+        res.json({ 
+            screenshots,
+            debug: {
+                searchPath: `screenshots/${userId}/`,
+                totalFound: data.Contents.length,
+                returnedCount: screenshots.length
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching user screenshots:', error);
+        res.status(500).json({ 
+            error: error.message,
+            debug: {
+                userId: req.params.userId,
+                bucketName,
+                searchAttempted: true
+            }
+        });
+    }
+});
+
+// Get user's screen recordings
+app.get('/api/users/:userId/recordings', authenticateToken, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const params = {
+            Bucket: bucketName,
+            Prefix: `recordings/${req.params.userId}/`
+        };
+
+        const data = await s3.listObjectsV2(params).promise();
+        if (!data.Contents || data.Contents.length === 0) {
+            return res.json({ recordings: [] });
+        }
+
+        const recordings = data.Contents
+            .map(item => ({
+                url: `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`,
+                timestamp: item.LastModified,
+                key: item.Key
+            }))
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, limit);
+
+        res.json({ recordings });
+    } catch (error) {
+        console.error('Error fetching user recordings:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's browser activities
+app.get('/api/users/:userId/browser-activities', authenticateToken, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const activities = await browserActivities
+            .find({ userId: req.params.userId })
+            .sort({ date: -1 })
+            .limit(limit);
+
+        res.json({ activities });
+    } catch (error) {
+        console.error('Error fetching browser activities:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's activity summary
+app.get('/api/users/:userId/activity-summary', authenticateToken, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Get today's activity
+        const todayActivity = await UserActivity.findOne({
+            userId: req.params.userId,
+            date: {
+                $gte: today,
+                $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+            }
+        });
+
+        // Get this week's activity
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay());
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(endOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+
+        const weekActivity = await UserActivity.find({
+            userId: req.params.userId,
+            date: { $gte: startOfWeek, $lte: endOfWeek }
+        });
+
+        // Calculate activity percentages
+        const todayStats = todayActivity ? {
+            mouseUsagePercentage: todayActivity.mouseUsagePercentage || 0,
+            keyboardUsagePercentage: todayActivity.keyboardUsagePercentage || 0,
+            totalTime: todayActivity.totalTime || 0
+        } : { mouseUsagePercentage: 0, keyboardUsagePercentage: 0, totalTime: 0 };
+
+        const weekStats = {
+            mouseUsagePercentage: weekActivity.reduce((acc, curr) => acc + (curr.mouseUsagePercentage || 0), 0) / (weekActivity.length || 1),
+            keyboardUsagePercentage: weekActivity.reduce((acc, curr) => acc + (curr.keyboardUsagePercentage || 0), 0) / (weekActivity.length || 1),
+            totalTime: weekActivity.reduce((acc, curr) => acc + (curr.totalTime || 0), 0)
+        };
+
+        res.json({
+            today: todayStats,
+            thisWeek: weekStats
+        });
+    } catch (error) {
+        console.error('Error fetching activity summary:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get user's tasks with pagination and filters
+app.get('/api/users/:userId/tasks', authenticateToken, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const status = req.query.status;
+        const priority = req.query.priority;
+        const search = req.query.search;
+
+        let query = { userId: req.params.userId };
+
+        // Add filters if provided
+        if (status) query.status = status;
+        if (priority) query.priority = priority;
+        if (search) {
+            query.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const total = await Task.countDocuments(query);
+        const tasks = await Task.find(query)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit);
+
+        res.json({
+            tasks,
+            pagination: {
+                total,
+                page,
+                pages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching tasks:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {

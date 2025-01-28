@@ -499,11 +499,9 @@ async function handleTaskSubmit(e) {
             priority: 'High',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            sprint: sprintValue || null,
+            epic: epicValue || null,
             metadata: {
-                sprint: sprintValue || null,
-                sprintName: selectedSprintName,
-                epic: epicValue || null,
-                epicName: selectedEpicName,
                 labels: [],
                 dependencies: [],
                 attachments: []

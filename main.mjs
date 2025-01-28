@@ -19,6 +19,7 @@ import { Readable } from 'stream';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { spawn } from 'child_process';
+import { GlobalKeyboardListener } from 'node-global-key-listener';
 
 // Load environment variables
 dotenv.config();
@@ -193,6 +194,9 @@ let currentRecordingPath = null;
 let ffmpegProcess = null;
 let uploadInProgress = false;
 
+// Initialize global keyboard listener
+let globalKeyboardListener = null;
+
 // Add this helper function at the top level
 const ensureDirectoryExists = async (dirPath) => {
     try {
@@ -208,6 +212,21 @@ function formatTimerDisplay(seconds) {
     const minutes = Math.floor((seconds % 3600) / 60);
     const remainingSeconds = seconds % 60;
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+// Helper function to format window titles
+function formatWindowTitle(window) {
+    if (!window.title || window.title.trim() === '') {
+        // Handle different cases for empty titles
+        if (window.owner.name === 'Windows Explorer') {
+            return 'Windows Home Screen';
+        } else if (window.url) {
+            return `${window.owner.name} - ${window.url}`;
+        } else {
+            return `${window.owner.name} Window`;
+        }
+    }
+    return window.title;
 }
 
 // Update startActivityTracking function
@@ -234,90 +253,128 @@ function startActivityTracking(userId, projectId) {
         });
     }
 
+    let activityBuffer = {
+        mouseEvents: 0,
+        keyboardEvents: 0,
+        lastActivityTime: new Date(),
+        timeSlots: new Array(180).fill(false),
+        startTime: new Date()
+    };
+
+    let lastUpdateTime = Date.now();
+    let accumulatedTime = 0;
+
     // Single timer interval for everything
-    const mainInterval = setInterval(async () => {
+    const mainInterval = setInterval(() => {
         if (!isPaused && isTracking && !pendingStop) {
-            activeTimerSeconds++;
+            const currentTime = Date.now();
+            const deltaTime = currentTime - lastUpdateTime;
+            lastUpdateTime = currentTime;
+
+            // Accumulate precise time
+            accumulatedTime += deltaTime;
             
-            // Log timer update to console only every minute (60 seconds)
-            if (activeTimerSeconds % 60 === 0) {
-                console.log(`Timer Update: ${formatTimerDisplay(activeTimerSeconds)}`);
-            }
-            
-            const mainWindow = BrowserWindow.getAllWindows()[0];
-            if (mainWindow) {
-                mainWindow.webContents.send('timer-update', activeTimerSeconds);
-                
-                // Handle screenshot at 10-minute intervals (600 seconds)
-                if (activeTimerSeconds % 600 === 0) {
-                    console.log('\n=== Capturing Screenshot (10-minute interval) ===');
-                    const result = await captureScreenshot(userId);
-                    if (result.success) {
-                        mainWindow.webContents.send('screenshot-captured', result);
+            // Only update when we've accumulated a full second
+            while (accumulatedTime >= 1000) {
+                activeTimerSeconds++;
+                accumulatedTime -= 1000;
+
+                // Update activity time slots (true if there was activity in this second)
+                const currentSecondIndex = (activeTimerSeconds - 1) % 180;
+                activityBuffer.timeSlots[currentSecondIndex] = 
+                    (currentTime - activityBuffer.lastActivityTime) < 1000;
+
+                const mainWindow = BrowserWindow.getAllWindows()[0];
+                if (mainWindow) {
+                    // Send timer update to renderer
+                    mainWindow.webContents.send('timer-update', {
+                        seconds: activeTimerSeconds,
+                        display: formatTimerDisplay(activeTimerSeconds)
+                    });
+
+                    // Log timer update every minute (60 seconds)
+                    if (activeTimerSeconds % 60 === 0) {
+                        console.log(`Timer Update: ${formatTimerDisplay(activeTimerSeconds)}`);
+                    }
+
+                    // Handle screenshot and activity tracking every 3 minutes (180 seconds)
+                    if (activeTimerSeconds % 180 === 0) {
+                        handleScreenshotAndActivity(userId, activityBuffer, mainWindow);
+                    }
+
+                    // Handle screen recording at 5-minute intervals (300 seconds)
+                    if (activeTimerSeconds % 300 === 0 && !isRecording) {
+                        console.log('\n=== Starting New Recording Segment (5-minute interval) ===');
+                        startRecording(userId, projectId).catch(err => {
+                            console.error('Failed to start recording segment:', err);
+                        });
+                    }
+
+                    // Track window activity every 5 seconds
+                    if (activeTimerSeconds % 5 === 0) {
+                        trackWindowActivity(userId, projectId, mainWindow);
                     }
                 }
-
-                // Handle screen recording at 15-minute intervals (900 seconds)
-                if (activeTimerSeconds % 900 === 0 && !isRecording) {
-                    console.log('\n=== Starting New Recording Segment (15-minute interval) ===');
-                    startRecording(userId, projectId).catch(err => {
-                        console.error('Failed to start recording segment:', err);
-                    });
-                }
-                
-                // Track window activity every 5 seconds
-                if (activeTimerSeconds % 5 === 0) {
-                    trackWindowActivity(userId, projectId, mainWindow);
-                }
             }
+        } else {
+            // Update lastUpdateTime even when paused to maintain accuracy when resumed
+            lastUpdateTime = Date.now();
         }
-    }, 1000);
+    }, 100); // Run interval more frequently for better precision
 
     screenshotInterval = mainInterval;
-    setupEventListeners();
+    setupEventListeners(activityBuffer);
 }
 
-// Add new function to initialize recording
-async function initializeRecording(userId, projectId) {
-    try {
-        console.log('\n=== Initializing Screen Recording System ===');
-        
-        // Start initial recording
-        console.log('Starting initial recording...');
-        await recordVideo(userId, projectId);
-
-        // Set up recording interval (every 15 minutes)
-        console.log('Setting up recording interval (15 minutes)');
-        if (recordingInterval) {
-            clearInterval(recordingInterval);
+// Add this helper function to handle screenshot and activity
+async function handleScreenshotAndActivity(userId, activityBuffer, mainWindow) {
+    console.log('\n=== Capturing Screenshot and Activity Data (3-minute interval) ===');
+    
+    // Calculate total activity percentage
+    const activeSeconds = activityBuffer.timeSlots.filter(Boolean).length;
+    const totalActivityPercentage = (activeSeconds / 180) * 100;
+    
+    // Determine if activity was continuous
+    const maxInactiveGap = activityBuffer.timeSlots.reduce((max, current, index, arr) => {
+        if (!current) {
+            let gap = 1;
+            while (index + gap < arr.length && !arr[index + gap]) gap++;
+            return Math.max(max, gap);
         }
-        
-        recordingInterval = setInterval(async () => {
-            if (!isPaused && isTracking && !pendingStop) {
-                console.log('\n=== Starting New Recording Segment (15-minute interval) ===');
-                await recordVideo(userId, projectId);
-            }
-        }, 900000); // 15 minutes in milliseconds
+        return max;
+    }, 0);
 
-        console.log('Screen recording system initialized successfully');
-    } catch (error) {
-        console.error('Failed to initialize recording system:', error);
-    }
-}
+    const isContinuous = maxInactiveGap <= 5;
+    const finalActivityPercentage = isContinuous ? 100 : totalActivityPercentage;
+    
+    // Log activity data
+    console.log('Activity Data for Last 3 Minutes:');
+    console.log(`Total Events: ${activityBuffer.mouseEvents + activityBuffer.keyboardEvents}`);
+    console.log(`Mouse Events: ${activityBuffer.mouseEvents}`);
+    console.log(`Keyboard Events: ${activityBuffer.keyboardEvents}`);
+    console.log(`Activity Percentage: ${finalActivityPercentage.toFixed(2)}%`);
+    console.log(`Activity Type: ${isContinuous ? 'Continuous' : 'Intermittent'}`);
+    
+    // Capture screenshot with activity metadata
+    const result = await captureScreenshot(userId, {
+        activityPercentage: finalActivityPercentage,
+        isContinuous,
+        totalEvents: activityBuffer.mouseEvents + activityBuffer.keyboardEvents,
+        mouseEvents: activityBuffer.mouseEvents,
+        keyboardEvents: activityBuffer.keyboardEvents,
+        timeInterval: '3min'
+    });
 
-// Helper function to format window titles
-function formatWindowTitle(window) {
-    if (!window.title || window.title.trim() === '') {
-        // Handle different cases for empty titles
-        if (window.owner.name === 'Windows Explorer') {
-            return 'Windows Home Screen';
-        } else if (window.url) {
-            return `${window.owner.name} - ${window.url}`;
-        } else {
-            return `${window.owner.name} Window`;
-        }
+    if (result.success) {
+        mainWindow.webContents.send('screenshot-captured', result);
     }
-    return window.title;
+
+    // Reset activity buffer
+    activityBuffer.mouseEvents = 0;
+    activityBuffer.keyboardEvents = 0;
+    activityBuffer.lastActivityTime = new Date();
+    activityBuffer.timeSlots = new Array(180).fill(false);
+    activityBuffer.startTime = new Date();
 }
 
 // Update start tracking handler
@@ -618,7 +675,7 @@ ipcMain.handle('resume-tracking', (event, projectId) => {
 });
 
 // Add this function after the createWindow function
-async function captureScreenshot(userId) {
+async function captureScreenshot(userId, activityData = null) {
     if (screenshotDue) {
         console.log('Screenshot already in progress, skipping...');
         return { success: false, error: 'Screenshot already in progress' };
@@ -630,18 +687,34 @@ async function captureScreenshot(userId) {
         const timestamp = new Date();
         const img = await screenshot({ format: 'png' });
 
+        // Create metadata object with simplified activity data
+        const metadata = {
+            timestamp: timestamp.toISOString(),
+            userId,
+            activeTime: activeTimerSeconds,
+            activity: activityData || {
+                activityPercentage: 0,
+                isContinuous: false,
+                totalEvents: 0,
+                timeInterval: '3min'
+            }
+        };
+
         const key = `screenshots/${userId}/${timestamp.toISOString()}.png`;
         
-        console.log('Uploading screenshot to S3...');
+        console.log('Uploading screenshot to S3 with metadata:', metadata);
         const command = new PutObjectCommand({
             Bucket: bucketName,
             Key: key,
             Body: img,
             ContentType: 'image/png',
+            Metadata: {
+                'activity-data': JSON.stringify(metadata)
+            }
         });
 
         await s3.send(command);
-        console.log('Screenshot uploaded successfully');
+        console.log('Screenshot and metadata uploaded successfully');
 
         const screenshotUrl = `https://${bucketName}.s3.us-east-1.amazonaws.com/${key}`;
         console.log('Screenshot URL:', screenshotUrl);
@@ -651,7 +724,8 @@ async function captureScreenshot(userId) {
             url: screenshotUrl,
             userId,
             timestamp: timestamp.toISOString(),
-            activeTime: activeTimerSeconds 
+            activeTime: activeTimerSeconds,
+            activityData: metadata.activity
         };
     } catch (error) {
         console.error('Error capturing screenshot:', error);
@@ -757,7 +831,7 @@ function clearAllIntervals() {
     console.log('All intervals cleared');
 }
 
-function setupEventListeners() {
+function setupEventListeners(activityBuffer) {
     console.log('Setting up event listeners');
     const mainWindow = BrowserWindow.getAllWindows()[0];
     
@@ -765,19 +839,58 @@ function setupEventListeners() {
     mainWindow.webContents.removeAllListeners('before-input-event');
     ipcMain.removeAllListeners('mouse-activity');
     
-    // Add new listeners
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-        if (!isPaused) {
-            keyboardEvents++;
+    // Setup global keyboard listener
+    if (!globalKeyboardListener) {
+        try {
+            globalKeyboardListener = new GlobalKeyboardListener();
+            
+            // Listen for any keyboard event
+            globalKeyboardListener.addListener((e, down) => {
+                if (!isPaused && activityBuffer) {
+                    activityBuffer.keyboardEvents++;
+                    activityBuffer.lastActivityTime = new Date();
+                    keyboardEvents++;
+                }
+            });
+        } catch (error) {
+            console.error('Failed to initialize global keyboard listener:', error);
         }
-    });
+    }
 
+    // Add mouse activity listeners
     ipcMain.on('mouse-activity', () => {
-        if (!isPaused) {
+        if (!isPaused && activityBuffer) {
+            activityBuffer.mouseEvents++;
+            activityBuffer.lastActivityTime = new Date();
             mouseEvents++;
         }
     });
+
+    // Add mousemove listener to the window
+    mainWindow.webContents.executeJavaScript(`
+        document.addEventListener('mousemove', () => {
+            window.electronAPI.trackMouseActivity();
+        });
+        document.addEventListener('click', () => {
+            window.electronAPI.trackMouseActivity();
+        });
+        document.addEventListener('wheel', () => {
+            window.electronAPI.trackMouseActivity();
+        });
+    `);
 }
+
+// Clean up keyboard listener when app is closing
+app.on('before-quit', () => {
+    if (globalKeyboardListener) {
+        try {
+            globalKeyboardListener.kill();
+            globalKeyboardListener = null;
+        } catch (error) {
+            console.error('Error cleaning up keyboard listener:', error);
+        }
+    }
+});
 
 // Add this function to handle GIF recording
 ipcMain.handle('toggle-gif-recording', (event, enabled) => {
@@ -919,7 +1032,7 @@ async function recordVideo(userId, projectId) {
                 '-draw_mouse', '1',
                 '-probesize', '42M',
                 '-i', 'desktop',
-                '-t', '30',  // Record for 30 seconds
+                '-t', '5',  // Record for 5 seconds
                 '-c:v', 'libx264',
                 '-preset', 'ultrafast',
                 '-y',
