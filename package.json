@@ -1,5 +1,5 @@
 {
-  "name": "Collabio",
+  "name": "AcTracker",
   "version": "1.0.0",
   "description": "A desktop application to track and manage activities efficiently.",
   "main": "main.mjs",
@@ -71,8 +71,14 @@
           ]
         }
       ],
+      "icon": "public/AcTracker_Icon.ico",
       "requestedExecutionLevel": "requireAdministrator",
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true
     },
     "mac": {
       "category": "public.app-category.utilities",
