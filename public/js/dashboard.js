@@ -12,14 +12,27 @@ const projectInfo = document.querySelector('.project-info');
 // State
 let isTracking = false;
 let elapsedSeconds = 0;
-let timerInterval;
+let timerInterval = null;
 let totalHoursInterval;
 let selectedTask = null;
 let currentProject = null;
 let allTasks = [];
 let filteredTasks = [];
 let currentPage = 1;
+let selectedTimePeriod = 90; // Default to 90 days
 const tasksPerPage = 10;
+
+// Add these variables to the existing state section
+let activeFilters = {
+    assignees: [],
+    status: [],
+    priority: [],
+    projects: [],
+    dateRange: {
+        start: null,
+        end: null
+    }
+};
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
@@ -48,8 +61,42 @@ function initializeDashboard() {
     dailyUpdateInterval = setInterval(updateDailyTime, 60000);
 }
 
-// Add this new function to calculate total hours for today
-async function updateTotalHoursToday() {
+// Update timer update listener to handle accumulated time
+window.electronAPI.onTimerUpdate((data) => {
+    if (isTracking) {
+        // Get existing time logged for task display
+        let existingSeconds = 0;
+        if (selectedTask.timing?.timeLogged) {
+            const timeMatch = selectedTask.timing.timeLogged.match(/(\d+)h\s*(\d+)m/);
+            if (timeMatch) {
+                const hours = parseInt(timeMatch[1]) || 0;
+                const minutes = parseInt(timeMatch[2]) || 0;
+                existingSeconds = (hours * 3600) + (minutes * 60);
+            }
+        }
+        
+        // Update elapsed time with current session time plus existing time for task display
+        elapsedSeconds = existingSeconds + data.seconds;
+        updateElapsedTimeDisplay();
+        
+        // Update the time logged column in real-time
+        const taskRow = document.querySelector(`[data-task-id="${selectedTask.taskId}"]`);
+        if (taskRow) {
+            const timeLoggedElement = taskRow.querySelector('.time-logged');
+            if (timeLoggedElement) {
+                const hours = Math.floor(elapsedSeconds / 3600);
+                const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+                timeLoggedElement.textContent = `${hours}h ${minutes}m`;
+            }
+        }
+        
+        // Update total hours today using only the current session time
+        updateTotalHoursToday(data.seconds);
+    }
+});
+
+// Update the updateTotalHoursToday function to use current session time
+async function updateTotalHoursToday(currentSessionSeconds = 0) {
     try {
         const userId = window.auth.getUserId();
         const today = new Date();
@@ -70,8 +117,8 @@ async function updateTotalHoursToday() {
         let totalSecondsToday = dailyTime.totalSeconds || 0;
 
         // Add current tracking session if active
-        if (isTracking) {
-            totalSecondsToday += elapsedSeconds;
+        if (isTracking && currentSessionSeconds) {
+            totalSecondsToday += currentSessionSeconds;
         }
 
         // Convert total seconds to HH:MM:SS format
@@ -105,17 +152,50 @@ async function updateTotalHoursToday() {
 function startTotalHoursUpdate() {
     // Update immediately
     updateTotalHoursToday();
-    // Then update every minute
-    totalHoursInterval = setInterval(updateTotalHoursToday, 60000);
+    // Set timeout for midnight reset
+    const now = new Date();
+    const timeUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now;
+    setTimeout(() => {
+        updateTotalHoursToday();
+        startTotalHoursUpdate(); // Restart for the next day
+    }, timeUntilMidnight);
 }
 
 // Clean up interval on page unload
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', async (event) => {
+    // Clear intervals
     if (totalHoursInterval) {
         clearInterval(totalHoursInterval);
     }
+
     if (isTracking) {
-        stopTimer();
+        // Cancel the default close behavior
+        event.preventDefault();
+        // Chrome requires returnValue to be set
+        event.returnValue = '';
+
+        try {
+            // Show confirmation dialog using electron
+            const choice = await window.electronAPI.showCloseConfirmation();
+            
+            if (choice) {
+                // User clicked Yes, stop the timer and save data
+                await stopTimer();
+                // Send close command to main process
+                await window.electronAPI.closeWindow();
+            }
+            // If user clicked No, prevent closing
+            event.preventDefault();
+            event.returnValue = '';
+        } catch (error) {
+            console.error('Error during close:', error);
+            // If there's an error, prevent closing
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    } else {
+        // No timer running, close normally
+        await window.electronAPI.closeWindow();
     }
 });
 
@@ -125,7 +205,7 @@ function setupEventListeners() {
     closeModalBtn.addEventListener('click', closeModal);
     
     // Timer controls
-    playButton.addEventListener('click', toggleTimer);
+    playButton.addEventListener('click', (event) => toggleTimer(event));
     completeTaskBtn.addEventListener('click', completeTask);
     
     // Form submission
@@ -136,6 +216,46 @@ function setupEventListeners() {
 
     // Recurring task fields
     setupRecurringTaskFields();
+
+    // Add time period select listener
+    const timePeriodSelect = document.getElementById('timePeriodSelect');
+    if (timePeriodSelect) {
+        timePeriodSelect.addEventListener('change', (e) => {
+            selectedTimePeriod = parseInt(e.target.value);
+            loadUserStats(); // Reload stats with new time period
+        });
+    }
+
+    // Filter modal controls
+    const filterIcon = document.getElementById('filter-icon');
+    const filterModal = document.getElementById('filter-modal');
+    const filterOverlay = document.getElementById('filter-overlay');
+    const closeFilterBtn = document.querySelector('.close-filter');
+    const cancelFilterBtn = document.getElementById('cancel-filter');
+    const clearFilterBtn = document.getElementById('clear-filter');
+    const applyFilterBtn = document.getElementById('apply-filter');
+
+    filterIcon.addEventListener('click', openFilterModal);
+    closeFilterBtn.addEventListener('click', closeFilterModal);
+    cancelFilterBtn.addEventListener('click', closeFilterModal);
+    clearFilterBtn.addEventListener('click', clearFilters);
+    applyFilterBtn.addEventListener('click', applyFilters);
+    filterOverlay.addEventListener('click', (e) => {
+        if (e.target === filterOverlay) {
+            closeFilterModal();
+        }
+    });
+
+    // Filter options click handlers
+    document.querySelectorAll('.filter-option').forEach(option => {
+        option.addEventListener('click', (e) => {
+            const checkbox = option.querySelector('input[type="checkbox"]');
+            if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+            }
+            option.classList.toggle('selected', checkbox.checked);
+        });
+    });
 }
 
 // Project Functions
@@ -153,8 +273,10 @@ async function loadProjects() {
 
         const projects = await response.json();
         populateProjectSelect(projects);
+        return projects;
     } catch (error) {
         console.error('Error loading projects:', error);
+        throw error;
     }
 }
 
@@ -223,17 +345,44 @@ async function updateTrackingSession() {
 
 // Modal Functions
 function openModal() {
+    const overlay = document.getElementById('modal-overlay');
     modal.classList.add('active');
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden'; // Prevent scrolling of background
 }
 
 function closeModal() {
+    const overlay = document.getElementById('modal-overlay');
     modal.classList.remove('active');
+    overlay.classList.remove('active');
+    document.body.style.overflow = ''; // Restore scrolling
 }
 
+// Add click handler for overlay to close modal when clicking outside
+document.addEventListener('DOMContentLoaded', () => {
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay) {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeModal();
+            }
+        });
+    }
+});
+
 // Timer Functions
-function toggleTimer() {
+function toggleTimer(event) {
+    // Prevent event bubbling
+    event.stopPropagation();
+    
     if (!selectedTask) {
         displayNotification('Please select a task first', 'error');
+        return;
+    }
+
+    // Check if task is completed
+    if (selectedTask.status === 'Completed') {
+        displayNotification('Cannot track time for completed tasks', 'warning');
         return;
     }
 
@@ -250,9 +399,30 @@ async function startTimer() {
         return;
     }
 
+    // Double check task status before starting timer
+    if (selectedTask.status === 'Completed') {
+        displayNotification('Cannot track time for completed tasks', 'warning');
+        return;
+    }
+
     try {
         isTracking = true;
         playButton.innerHTML = '<i class="fas fa-stop"></i>';
+        
+        // Get existing time logged and convert to seconds
+        let existingSeconds = 0;
+        if (selectedTask.timing?.timeLogged) {
+            const timeMatch = selectedTask.timing.timeLogged.match(/(\d+)h\s*(\d+)m/);
+            if (timeMatch) {
+                const hours = parseInt(timeMatch[1]) || 0;
+                const minutes = parseInt(timeMatch[2]) || 0;
+                existingSeconds = (hours * 3600) + (minutes * 60);
+            }
+        }
+        
+        // Start from existing elapsed time
+        elapsedSeconds = existingSeconds;
+        updateElapsedTimeDisplay();
         
         // Start electron tracking
         const userId = window.auth.getUserId();
@@ -272,24 +442,13 @@ async function startTimer() {
             });
 
             if (taskResponse.ok) {
-                // Update local task data
                 selectedTask.status = 'In Progress';
-                
-                // Update task in arrays and re-render
-                const taskIndex = allTasks.findIndex(t => t.taskId === selectedTask.taskId);
-                if (taskIndex !== -1) {
-                    allTasks[taskIndex] = {...selectedTask};
-                    const filteredIndex = filteredTasks.findIndex(t => t.taskId === selectedTask.taskId);
-                    if (filteredIndex !== -1) {
-                        filteredTasks[filteredIndex] = {...selectedTask};
-                    }
-                    renderTasks(filteredTasks.length ? filteredTasks : allTasks);
-                }
+                updateTaskInArrays(selectedTask);
             }
         }
         
+        // Start tracking browser activity
         window.electronAPI.startTrackingBrowserActivity(userId, projectId);
-        timerInterval = setInterval(updateTimer, 1000);
         
     } catch (error) {
         console.error('Error starting timer:', error);
@@ -299,6 +458,14 @@ async function startTimer() {
     }
 }
 
+// Add this new function to update elapsed time display
+function updateElapsedTimeDisplay() {
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    elapsedTime.textContent = formatTime(hours, minutes, seconds);
+}
+
 async function stopTimer() {
     if (!isTracking || !selectedTask) return;
 
@@ -306,32 +473,19 @@ async function stopTimer() {
         const userId = window.auth.getUserId();
         const projectId = selectedTask.project.projectId;
         
-        clearInterval(timerInterval);
-        
+        // Stop tracking in electron
         await window.electronAPI.stopTrackingBrowserActivity(userId, projectId, elapsedSeconds);
         
-        // Parse existing time logged
-        let existingHours = 0;
-        let existingMinutes = 0;
-        if (selectedTask.timing?.timeLogged) {
-            const timeMatch = selectedTask.timing.timeLogged.match(/(\d+)h\s*(\d+)m/);
-            if (timeMatch) {
-                existingHours = parseInt(timeMatch[1]) || 0;
-                existingMinutes = parseInt(timeMatch[2]) || 0;
-            }
-        }
-
-        // Add new elapsed time to existing time
-        const newSeconds = elapsedSeconds + (existingHours * 3600) + (existingMinutes * 60);
-        const totalHours = Math.floor(newSeconds / 3600);
-        const totalMinutes = Math.floor((newSeconds % 3600) / 60);
-        const timeLogged = `${totalHours}h ${totalMinutes}m`;
+        // Calculate total time logged
+        const hours = Math.floor(elapsedSeconds / 3600);
+        const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+        const timeLogged = `${hours}h ${minutes}m`;
         
-        // Calculate new worked hours (convert elapsed seconds to hours and add to existing)
+        // Calculate new worked hours
         const existingWorked = selectedTask.timing?.worked || 0;
         const newWorkedHours = existingWorked + (elapsedSeconds / 3600);
         
-        // Update task in database with accumulated time while preserving other timing fields
+        // Update task in database with accumulated time
         const taskResponse = await fetch(`${config.API_BASE_URL}/api/tasks/${selectedTask.taskId}`, {
             method: 'PATCH',
             headers: {
@@ -341,9 +495,7 @@ async function stopTimer() {
             body: JSON.stringify({
                 userId: userId,
                 timing: {
-                    startDate: selectedTask.timing?.startDate,
-                    dueDate: selectedTask.timing?.dueDate,
-                    estimate: selectedTask.timing?.estimate,
+                    ...selectedTask.timing,
                     worked: newWorkedHours,
                     timeLogged: timeLogged
                 }
@@ -354,7 +506,7 @@ async function stopTimer() {
             throw new Error('Failed to update task time');
         }
 
-        // Update daily time
+        // Update daily time with total elapsed time
         await updateDailyTime(
             selectedTask.taskId,
             elapsedSeconds,
@@ -362,7 +514,7 @@ async function stopTimer() {
             selectedTask.project.projectName
         );
         
-        // Update local task data while preserving all timing fields
+        // Update local task data
         selectedTask.timing = {
             ...selectedTask.timing,
             timeLogged: timeLogged,
@@ -370,22 +522,14 @@ async function stopTimer() {
         };
         
         // Update task in arrays and re-render
-        const taskIndex = allTasks.findIndex(t => t.taskId === selectedTask.taskId);
-        if (taskIndex !== -1) {
-            allTasks[taskIndex] = {...selectedTask};
-            const filteredIndex = filteredTasks.findIndex(t => t.taskId === selectedTask.taskId);
-            if (filteredIndex !== -1) {
-                filteredTasks[filteredIndex] = {...selectedTask};
-            }
-            renderTasks(filteredTasks.length ? filteredTasks : allTasks);
-        }
+        updateTaskInArrays(selectedTask);
         
-        // Reset timer state
-        elapsedSeconds = 0;
-        elapsedTime.textContent = '00:00:00';
+        // Reset timer state but keep the accumulated time
         isTracking = false;
         playButton.innerHTML = '<i class="fas fa-play"></i>';
         
+        // Update UI
+        updateProjectInfo(selectedTask);
         await loadUserStats();
         displayNotification('Timer stopped successfully', 'success');
         
@@ -393,25 +537,23 @@ async function stopTimer() {
         console.error('Error stopping timer:', error);
         displayNotification('Failed to stop timer: ' + error.message, 'error');
         
-        clearInterval(timerInterval);
-        elapsedSeconds = 0;
-        elapsedTime.textContent = '00:00:00';
+        // Reset timer state
         isTracking = false;
         playButton.innerHTML = '<i class="fas fa-play"></i>';
     }
 }
 
-function updateTimer() {
-    elapsedSeconds++;
-    const hours = Math.floor(elapsedSeconds / 3600);
-    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
-    const seconds = elapsedSeconds % 60;
-    
-    elapsedTime.textContent = formatTime(hours, minutes, seconds);
-}
-
-function formatTime(hours, minutes, seconds) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+// Add helper function to update task in arrays
+function updateTaskInArrays(task) {
+    const taskIndex = allTasks.findIndex(t => t.taskId === task.taskId);
+    if (taskIndex !== -1) {
+        allTasks[taskIndex] = {...task};
+        const filteredIndex = filteredTasks.findIndex(t => t.taskId === task.taskId);
+        if (filteredIndex !== -1) {
+            filteredTasks[filteredIndex] = {...task};
+        }
+        renderTasks(filteredTasks.length ? filteredTasks : allTasks);
+    }
 }
 
 // Task Functions
@@ -499,9 +641,11 @@ async function handleTaskSubmit(e) {
             priority: 'High',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            sprint: sprintValue || null,
-            epic: epicValue || null,
             metadata: {
+                sprint: sprintValue || null,
+                sprintName: selectedSprintName,
+                epic: epicValue || null,
+                epicName: selectedEpicName,
                 labels: [],
                 dependencies: [],
                 attachments: []
@@ -828,12 +972,14 @@ async function loadTasks() {
     }
 }
 
-// Add this function to calculate priority based on deadline
+// Update the calculatePriority function
 function calculatePriority(dueDate) {
     if (!dueDate) return 'Low';
     
     const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
     const deadline = new Date(dueDate);
+    deadline.setHours(0, 0, 0, 0);
     const daysUntilDue = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
     
     if (daysUntilDue < 0) return 'Overdue';
@@ -842,11 +988,11 @@ function calculatePriority(dueDate) {
     return 'Low';
 }
 
+// Update the renderTasks function to include priority calculation
 function renderTasks(tasks) {
     const tableBody = document.querySelector('.table-body');
     const emptyState = document.querySelector('.empty-state');
     
-    // Ensure we have the required elements
     if (!tableBody) {
         console.error('Table body element not found');
         return;
@@ -864,7 +1010,6 @@ function renderTasks(tasks) {
         emptyState.style.display = 'none';
     }
     
-    // Calculate start and end indices for current page
     const startIndex = (currentPage - 1) * tasksPerPage;
     const endIndex = startIndex + tasksPerPage;
     const paginatedTasks = tasks.slice(startIndex, endIndex);
@@ -876,14 +1021,17 @@ function renderTasks(tasks) {
             timeLogged = task.timing.timeLogged;
         }
 
+        // Calculate current priority based on deadline
+        const currentPriority = calculatePriority(task.timing?.dueDate);
+
         return `
-            <div class="task-row" onclick="selectTask(${JSON.stringify(task).replace(/"/g, '&quot;')})">
+            <div class="task-row ${selectedTask && selectedTask.taskId === task.taskId ? 'selected' : ''}" 
+                 data-task-id="${task.taskId}" 
+                 onclick="selectTask(${JSON.stringify(task).replace(/"/g, '&quot;')})">
                 <div class="task-title">${task.title || 'Untitled Task'}</div>
                 <div class="project-name">${task.project?.projectName || 'No Project'}</div>
                 <div class="deadline">${formatDate(task.timing?.dueDate)}</div>
-                <div class="priority">
-                    <span class="priority-badge priority-${task.priority?.toLowerCase()}">${task.priority || 'Low'}</span>
-                </div>
+                <div class="priority-badge priority-${currentPriority.toLowerCase()}">${currentPriority}</div>
                 <div class="time-logged">${timeLogged}</div>
                 <div class="status">
                     <span class="status-badge ${getStatusClass(task.status)}">${task.status || 'Not Started'}</span>
@@ -906,47 +1054,91 @@ function getStatusClass(status) {
 }
 
 function selectTask(task) {
+    // If timer is running, don't allow task switching
+    if (isTracking) {
+        displayNotification('Please stop the current timer before switching tasks', 'warning');
+        return;
+    }
+
+    // Remove selection from previously selected task
+    const previouslySelected = document.querySelector('.task-row.selected');
+    if (previouslySelected) {
+        previouslySelected.classList.remove('selected');
+    }
+
     selectedTask = task;
     
-    if (!task) {
+    if (task) {
+        // Add selection to newly selected task
+        const taskRow = document.querySelector(`[data-task-id="${task.taskId}"]`);
+        if (taskRow) {
+            taskRow.classList.add('selected');
+        }
+
+        // Get existing time logged and update elapsed time display
+        let existingSeconds = 0;
+        if (task.timing?.timeLogged) {
+            const timeMatch = task.timing.timeLogged.match(/(\d+)h\s*(\d+)m/);
+            if (timeMatch) {
+                const hours = parseInt(timeMatch[1]) || 0;
+                const minutes = parseInt(timeMatch[2]) || 0;
+                existingSeconds = (hours * 3600) + (minutes * 60);
+            }
+        }
+        
+        // Update elapsed time display with existing time
+        elapsedSeconds = existingSeconds;
+        updateElapsedTimeDisplay();
+
+        // Update project info display with task details
+        updateProjectInfo(task);
+        
+        // Show complete task button
+        completeTaskBtn.style.display = 'block';
+    } else {
+        // Reset elapsed time display when no task is selected
+        elapsedSeconds = 0;
+        updateElapsedTimeDisplay();
+
+        // Show the SVG and default message when no task is selected
         projectInfo.innerHTML = `
             <div class="no-task-container">
-                <svg width="173" height="144" viewBox="0 0 173 144" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M120.9 79C123.164 79 125 77.1644 125 74.9C125 72.6356 123.164 70.8 120.9 70.8C118.635 70.8 116.8 72.6356 116.8 74.9C116.8 77.1644 118.635 79 120.9 79Z" fill="#EAEEF9"/>
-                    <path d="M113.027 90.4392C114.573 90.4392 115.827 89.1856 115.827 87.6392C115.827 86.0928 114.573 84.8392C113.027 84.8392C111.48 84.8392C110.227 86.0928 110.227 87.6392C110.227 89.1856 111.48 90.4392 113.027 90.4392Z" fill="#EAEEF9"/>
-                    <path d="M22.3 22C23.8464 22 25.1 20.7464 25.1 19.2C25.1 17.6536 23.8464 16.4 22.3 16.4C20.7536 16.4 19.5 17.6536 19.5 19.2C19.5 20.7464 20.7536 22 22.3 22Z" fill="#EAEEF9"/>
-                    <path d="M5.2 76C8.07188 76 10.4 73.6719 10.4 70.8C10.4 67.9281 8.07188 65.6 5.2 65.6C2.32812 65.6 0 67.9281 0 70.8C0 73.6719 2.32812 76 5.2 76Z" fill="#EAEEF9"/>
-                    <path d="M68.3499 102.1C96.3499 102.1 119.05 79.4 119.05 51.3C119.05 23.2 96.3499 0.5 68.3499 0.5C40.3499 0.5 17.6499 23.2 17.6499 51.3C17.6499 79.4 40.3499 102.1 68.3499 102.1Z" fill="#EAEEF9"/>
-                    <path d="M124.733 15.9021C126.636 15.9021 128.247 17.3589 128.247 19.3985V122.543C128.247 124.437 126.783 126.039 124.733 126.039H48.4556C46.5524 126.039 44.9419 124.583 44.9419 122.543V19.3985C44.9419 17.5046 46.4059 15.9021 48.4556 15.9021H124.733Z" fill="#CED7E2"/>
-                    <path d="M128.247 26.6827V122.397C128.247 124.291 126.783 125.894 124.733 125.894H55.044L48.895 119.775L118.145 24.9345L124.147 22.7492L128.247 26.6827Z" fill="#BCC4CF"/>
-                    <path d="M124.44 23.9147C124.44 23.332 124.001 22.7492 123.269 22.7492H50.0663C49.4806 22.7492 48.895 23.1863 48.895 23.9147V118.609C48.895 119.192 49.3342 119.775 50.0663 119.775H123.123C123.708 119.775 124.294 119.338 124.294 118.609L124.44 23.9147Z" fill="#D9DFEE"/>
-                    <path d="M124.44 23.9147C124.44 23.332 124.001 22.7492 123.269 22.7492H50.0661C49.4805 22.7492 48.8949 23.1863 48.8949 23.9147C49.7733 61.6469 50.0661 104.332 45.9668 115.404L116.095 114.385C120.341 95.1543 123.562 60.6271 124.44 23.9147Z" fill="#EFF3FB"/>
-                    <g filter="url(#filter0_d_1340_22096)">
-                    <path d="M124.293 22.8949C124.293 22.8949 124.147 28.5766 122.39 64.852C122.39 65.1433 122.39 65.289 122.39 65.5804C120.194 101.127 88.5703 108.557 84.7638 108.994C83.0069 109.14 79.6396 109.431 73.637 109.431C66.1703 109.723 54.7507 109.868 36.8892 110.014C36.3036 110.014 35.8644 109.431 36.1572 108.849C48.4552 84.228 48.6016 23.0406 48.6016 23.0406L124.293 22.8949Z" fill="white"/>
+                <svg width="183" height="184" viewBox="0 0 183 184" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M125.9 101C128.164 101 130 99.1644 130 96.9C130 94.6356 128.164 92.8 125.9 92.8C123.635 92.8 121.8 94.6356 121.8 96.9C121.8 99.1644 123.635 101 125.9 101Z" fill="#EAEEF9"/>
+                    <path d="M118.027 112.439C119.573 112.439 120.827 111.186 120.827 109.639C120.827 108.093 119.573 106.839 118.027 106.839C116.48 106.839 115.227 108.093 115.227 109.639C115.227 111.186 116.48 112.439 118.027 112.439Z" fill="#EAEEF9"/>
+                    <path d="M27.3 44C28.8464 44 30.1 42.7464 30.1 41.2C30.1 39.6536 28.8464 38.4 27.3 38.4C25.7536 38.4 24.5 39.6536 24.5 41.2C24.5 42.7464 25.7536 44 27.3 44Z" fill="#EAEEF9"/>
+                    <path d="M10.2 98C13.0719 98 15.4 95.6719 15.4 92.8C15.4 89.9281 13.0719 87.6 10.2 87.6C7.32812 87.6 5 89.9281 5 92.8C5 95.6719 7.32812 98 10.2 98Z" fill="#EAEEF9"/>
+                    <path d="M73.3499 124.1C101.35 124.1 124.05 101.4 124.05 73.3C124.05 45.2 101.35 22.5 73.3499 22.5C45.3499 22.5 22.6499 45.2 22.6499 73.3C22.6499 101.4 45.3499 124.1 73.3499 124.1Z" fill="#EAEEF9"/>
+                    <path d="M129.733 37.9021C131.636 37.9021 133.247 39.3589 133.247 41.3985V144.543C133.247 146.437 131.783 148.039 129.733 148.039H53.4556C51.5524 148.039 49.9419 146.583 49.9419 144.543V41.3985C49.9419 39.5046 51.4059 37.9021 53.4556 37.9021H129.733Z" fill="#CED7E2"/>
+                    <path d="M133.247 48.6827V144.397C133.247 146.291 131.783 147.894 129.733 147.894H60.044L53.895 141.775L123.145 46.9345L129.147 44.7492L133.247 48.6827Z" fill="#BCC4CF"/>
+                    <path d="M129.44 45.9147C129.44 45.332 129.001 44.7492 128.269 44.7492H55.0663C54.4806 44.7492 53.895 45.1863 53.895 45.9147V140.609C53.895 141.192 54.3342 141.775 55.0663 141.775H128.123C128.708 141.775 129.294 141.338 129.294 140.609L129.44 45.9147Z" fill="#D9DFEE"/>
+                    <path d="M129.44 45.9147C129.44 45.332 129.001 44.7492 128.269 44.7492H55.0661C54.4805 44.7492 53.8949 45.1863 53.8949 45.9147C54.7733 83.6469 55.0661 126.332 50.9668 137.404L121.095 136.385C125.341 117.154 128.562 82.6271 129.44 45.9147Z" fill="#EFF3FB"/>
+                    <g filter="url(#filter0_d_1340_22095)">
+                    <path d="M129.293 44.8949C129.293 44.8949 129.147 50.5766 127.39 86.852C127.39 87.1433 127.39 87.289 127.39 87.5804C125.194 123.127 93.5703 130.557 89.7638 130.994C88.0069 131.14 84.6396 131.431 78.637 131.431C71.1703 131.723 59.7507 131.868 41.8892 132.014C41.3036 132.014 40.8644 131.431 41.1572 130.849C53.4552 106.228 53.6016 45.0406 53.6016 45.0406L129.293 44.8949Z" fill="white"/>
                     </g>
-                    <path d="M122.244 65.4347C120.194 100.982 88.4241 108.412 84.6175 108.849C82.8607 108.994 79.4933 109.286 73.4907 109.286C89.3025 102.001 97.794 88.8899 97.6476 78.692C105.261 79.2747 118.437 78.692 122.244 65.4347Z" fill="#EAEEF9"/>
-                    <path d="M104.382 16.1934C104.382 16.0477 104.382 16.0477 104.382 16.1934L103.65 15.465C103.65 15.465 103.211 15.6107 103.065 15.9021H91.6451C91.6451 15.6107 91.6451 15.465 91.6451 15.1736C91.6451 12.8427 89.5954 10.8031 87.2529 10.8031C84.9104 10.8031 82.8607 12.8427 82.8607 15.1736C82.8607 15.465 82.8607 15.6107 83.0071 15.7564H71.1483C70.5627 15.7564 69.9771 16.1934 69.9771 17.0675V20.8553C69.9771 23.769 72.0267 25.5172 74.8084 25.5172H99.1117C102.04 25.5172 104.529 23.769 104.529 20.8553V16.9219C104.675 16.6305 104.529 16.3391 104.382 16.1934Z" fill="#1C3754"/>
-                    <path d="M103.943 16.1934V19.9812C103.943 20.2726 103.943 20.4183 103.943 20.7097C103.504 23.1863 101.454 25.2259 98.819 25.2259H74.3693C71.734 25.2259 69.6843 23.1863 69.2451 20.7097C69.2451 20.4183 69.2451 20.2726 69.2451 19.9812V16.1934C69.2451 15.6107 69.6843 14.8823 70.4164 14.8823H82.4216C82.4216 14.5909 82.4216 14.4452 82.4216 14.2995C82.4216 11.9686 84.4713 9.92902 86.8138 9.92902C89.1563 9.92902 91.2059 11.9686 91.2059 14.2995C91.2059 14.5909 91.2059 14.7366 91.2059 14.8823H103.211C103.504 15.028 103.943 15.465 103.943 16.1934Z" fill="url(#paint0_linear_1340_22096)"/>
-                    <path d="M86.5209 16.3391C87.6921 16.3391 88.5705 15.465 88.5705 14.2995C88.5705 13.1341 87.6921 12.26 86.5209 12.26C85.3496 12.26 84.4712 13.1341 84.4712 14.2995C84.4712 15.465 85.496 16.3391 86.5209 16.3391Z" fill="#EAEEF9"/>
-                    <path d="M103.797 20.7097C103.358 23.1863 101.308 25.2259 98.6726 25.2259H74.3693C71.734 25.2259 69.6843 23.1863 69.2451 20.7097H103.797Z" fill="#9AA1B2"/>
-                    <path d="M66.9027 64.9977C69.2452 64.9977 71.002 63.1038 71.002 60.9185C71.002 58.5875 69.0988 56.8393 66.9027 56.8393C64.5602 56.8393 62.8033 58.7332 62.8033 60.9185C62.6569 63.1038 64.5602 64.9977 66.9027 64.9977Z" fill="#989FB0"/>
-                    <path d="M99.4045 64.852C101.747 64.852 103.504 62.9581 103.504 60.7728C103.504 58.4419 101.601 56.6937 99.4045 56.6937C97.2084 56.6937 95.3052 58.5876 95.3052 60.7728C95.3052 62.9581 97.062 64.852 99.4045 64.852Z" fill="#989FB0"/>
-                    <path d="M87.1066 69.3682H79.2007V71.2621H87.1066V69.3682Z" fill="#989FB0"/>
-                    <path d="M166.019 23.332C169.24 38.4831 168.801 54.5084 164.409 69.3682C163.384 72.4276 162.359 75.7783 160.163 78.1093C157.088 81.7514 151.525 83.3539 146.986 82.1884C142.301 81.0229 138.495 76.9438 137.616 71.9905C136.884 68.9311 137.909 65.289 140.544 63.3951C143.326 61.6469 147.279 62.084 149.622 64.2692C152.257 66.4545 153.282 69.8052 153.135 73.0103C152.989 76.2154 151.818 79.4204 150.207 82.1884C145.376 91.2208 136.592 98.3594 126.49 101.564C119.023 103.895 110.971 103.895 103.504 101.856" stroke="#C9D4E2" stroke-width="2" stroke-miterlimit="10" stroke-dasharray="4 4"/>
-                    <path d="M172.168 18.9614C171.729 20.564 169.972 21.1467 168.215 20.1269C166.312 19.2528 164.995 18.5244 165.287 17.0675C165.727 15.6107 167.483 15.465 169.533 15.3193C172.022 15.028 172.461 17.3589 172.168 18.9614Z" fill="#DAE2EB"/>
-                    <path d="M157.967 20.4183C158.699 21.7294 160.749 22.6035 162.213 21.2924C163.823 19.8355 165.141 18.8158 164.409 17.3589C163.677 16.0478 162.506 16.4848 160.017 16.7762C157.967 17.2132 157.089 18.9614 157.967 20.4183Z" fill="#DAE2EB"/>
-                    <path d="M164.409 15.028C165.434 14.8823 166.458 15.465 166.751 16.3391C166.898 16.6305 167.044 17.0675 167.044 17.3589C167.337 19.3985 166.605 21.1467 165.434 21.2924C164.116 21.5838 162.798 20.1269 162.652 18.233C162.652 17.6503 162.652 17.3589 162.652 16.9219C162.798 15.9021 163.384 15.1736 164.409 15.028C164.555 15.028 164.409 15.028 164.409 15.028Z" fill="#989FB0"/>
+                    <path d="M127.244 87.4347C125.194 122.982 93.4241 130.412 89.6175 130.849C87.8607 130.994 84.4933 131.286 78.4907 131.286C94.3025 124.001 102.794 110.89 102.648 100.692C110.261 101.275 123.437 100.692 127.244 87.4347Z" fill="#EAEEF9"/>
+                    <path d="M109.382 38.1934C109.382 38.0477 109.382 38.0477 109.382 38.1934L108.65 37.465C108.65 37.465 108.211 37.6107 108.065 37.9021H96.6451C96.6451 37.6107 96.6451 37.465 96.6451 37.1736C96.6451 34.8427 94.5954 32.8031 92.2529 32.8031C89.9104 32.8031 87.8607 34.8427 87.8607 37.1736C87.8607 37.465 87.8607 37.6107 88.0071 37.7564H76.1483C75.5627 37.7564 74.9771 38.1934 74.9771 39.0675V42.8553C74.9771 45.769 77.0267 47.5172 79.8084 47.5172H104.112C107.04 47.5172 109.529 45.769 109.529 42.8553V38.9219C109.675 38.6305 109.529 38.3391 109.382 38.1934Z" fill="#1C3754"/>
+                    <path d="M108.943 38.1934V41.9812C108.943 42.2726 108.943 42.4183 108.943 42.7097C108.504 45.1863 106.454 47.2259 103.819 47.2259H79.3693C76.734 47.2259 74.6843 45.1863 74.2451 42.7097C74.2451 42.4183 74.2451 42.2726 74.2451 41.9812V38.1934C74.2451 37.6107 74.6843 36.8823 75.4164 36.8823H87.4216C87.4216 36.5909 87.4216 36.4452 87.4216 36.2995C87.4216 33.9686 89.4713 31.929 91.8138 31.929C94.1563 31.929 96.2059 33.9686 96.2059 36.2995C96.2059 36.5909 96.2059 36.7366 96.2059 36.8823H108.211C108.504 37.028 108.943 37.465 108.943 38.1934Z" fill="url(#paint0_linear_1340_22095)"/>
+                    <path d="M91.5209 38.3391C92.6921 38.3391 93.5705 37.465 93.5705 36.2995C93.5705 35.1341 92.6921 34.26 91.5209 34.26C90.3496 34.26 89.4712 35.1341 89.4712 36.2995C89.4712 37.465 90.496 38.3391 91.5209 38.3391Z" fill="#EAEEF9"/>
+                    <path d="M108.797 42.7097C108.358 45.1863 106.308 47.2259 103.673 47.2259H79.3693C76.734 47.2259 74.6843 45.1863 74.2451 42.7097H108.797Z" fill="#9AA1B2"/>
+                    <path d="M71.9027 86.9977C74.2452 86.9977 76.002 85.1038 76.002 82.9185C76.002 80.5875 74.0988 78.8393 71.9027 78.8393C69.5602 78.8393 67.8033 80.7332 67.8033 82.9185C67.6569 85.1038 69.5602 86.9977 71.9027 86.9977Z" fill="#989FB0"/>
+                    <path d="M104.405 86.852C106.747 86.852 108.504 84.9581 108.504 82.7728C108.504 80.4419 106.601 78.6937 104.405 78.6937C102.208 78.6937 100.305 80.5876 100.305 82.7728C100.305 84.9581 102.062 86.852 104.405 86.852Z" fill="#989FB0"/>
+                    <path d="M92.1066 91.3682H84.2007V93.2621H92.1066V91.3682Z" fill="#989FB0"/>
+                    <path d="M171.019 45.332C174.24 60.4831 173.801 76.5084 169.409 91.3682C168.384 94.4276 167.359 97.7783 165.163 100.109C162.088 103.751 156.525 105.354 151.986 104.188C147.301 103.023 143.495 98.9438 142.616 93.9905C141.884 90.9311 142.909 87.289 145.544 85.3951C148.326 83.6469 152.279 84.084 154.622 86.2692C157.257 88.4545 158.282 91.8052 158.135 95.0103C157.989 98.2154 156.818 101.42 155.207 104.188C150.376 113.221 141.592 120.359 131.49 123.564C124.023 125.895 115.971 125.895 108.504 123.856" stroke="#C9D4E2" stroke-width="2" stroke-miterlimit="10" stroke-dasharray="4 4"/>
+                    <path d="M177.168 40.9614C176.729 42.564 174.972 43.1467 173.215 42.1269C171.312 41.2528 169.995 40.5244 170.287 39.0675C170.727 37.6107 172.483 37.465 174.533 37.3193C177.022 37.028 177.461 39.3589 177.168 40.9614Z" fill="#DAE2EB"/>
+                    <path d="M162.967 42.4183C163.699 43.7294 165.749 44.6035 167.213 43.2924C168.823 41.8355 170.141 40.8158 169.409 39.3589C168.677 38.0478 167.506 38.4848 165.017 38.7762C162.967 39.2132 162.089 40.9614 162.967 42.4183Z" fill="#DAE2EB"/>
+                    <path d="M169.409 37.028C170.434 36.8823 171.458 37.465 171.751 38.3391C171.898 38.6305 172.044 39.0675 172.044 39.3589C172.337 41.3985 171.605 43.1467 170.434 43.2924C169.116 43.5838 167.798 42.1269 167.652 40.233C167.652 39.6503 167.652 39.3589 167.652 38.9219C167.798 37.9021 168.384 37.1736 169.409 37.028C169.555 37.028 169.409 37.028 169.409 37.028Z" fill="#989FB0"/>
                     <defs>
-                    <filter id="filter0_d_1340_22096" x="14.064" y="11.8949" width="132.229" height="131.119" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                    <filter id="filter0_d_1340_22095" x="19.064" y="33.8949" width="132.229" height="131.119" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
                     <feFlood flood-opacity="0" result="BackgroundImageFix"/>
-                    <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                    <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
                     <feOffset dy="11"/>
                     <feGaussianBlur stdDeviation="11"/>
                     <feColorMatrix type="matrix" values="0 0 0 0 0.397708 0 0 0 0 0.47749 0 0 0 0 0.575 0 0 0 0.27 0"/>
-                    <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1340_22096"/>
-                    <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1340_22096" result="shape"/>
+                    <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1340_22095"/>
+                    <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1340_22095" result="shape"/>
                     </filter>
-                    <linearGradient id="paint0_linear_1340_22096" x1="69.287" y1="17.5793" x2="103.977" y2="17.5793" gradientUnits="userSpaceOnUse">
+                    <linearGradient id="paint0_linear_1340_22095" x1="74.287" y1="39.5793" x2="108.977" y2="39.5793" gradientUnits="userSpaceOnUse">
                     <stop stop-color="#B0BACC"/>
                     <stop offset="1" stop-color="#969EAE"/>
                     </linearGradient>
@@ -956,9 +1148,26 @@ function selectTask(task) {
                 <p class="no-task-message">Please select task to start track ur time</p>
             </div>
         `;
+        completeTaskBtn.style.display = 'none';
+    }
+}
+
+function updateProjectInfo(task) {
+    if (!task) {
+        // Show the SVG when no task is selected
+        projectInfo.innerHTML = `
+            <div class="no-task-container">
+                <svg width="183" height="184" viewBox="0 0 183 184" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <!-- SVG content same as above -->
+                </svg>
+                <p class="no-task">No Task Selected!</p>
+                <p class="no-task-message">Please select task to start track ur time</p>
+            </div>
+        `;
         return;
     }
     
+    // Show task details when a task is selected (without time logged)
     const formattedDate = task.timing?.dueDate ? formatDate(task.timing.dueDate) : 'No date';
     
     projectInfo.innerHTML = `
@@ -966,29 +1175,23 @@ function selectTask(task) {
             <p class="project-name">${task.project?.projectName || 'No Project'}</p>
             <p class="task-name">${task.title}</p>
             <div class="task-meta">
-                <span class="due-date">Due Time: ${formattedDate}</span>
+                <span class="due-date">Due: ${formattedDate}</span>
                 <span class="priority">Priority: ${task.priority}</span>
                 <span class="status">Status: ${task.status}</span>
             </div>
             <div class="task-details">
-                <p class="assigned-by">Assigned to: ${task.assignee?.userId}</p>
                 <p class="task-description">${task.description || 'No description'}</p>
             </div>
         </div>
     `;
-
-    // If timer is running for a different task, stop it
-    if (isTracking) {
-        stopTimer();
-    }
 }
 
 async function loadUserStats() {
     try {
         const userId = window.auth.getUserId();
         
-        // Fetch all daily time entries for the user
-        const response = await fetch(`https://actracker.onrender.com/api/daily-time/all/${userId}`, {
+        // Fetch daily time entries for the selected period
+        const response = await fetch(`https://actracker.onrender.com/api/daily-time/all/${userId}?period=${selectedTimePeriod}`, {
             headers: {
                 'Authorization': `Bearer ${window.auth.getToken()}`
             }
@@ -1015,13 +1218,17 @@ async function loadUserStats() {
         document.querySelector('.stat-card:nth-child(1) p').textContent = formattedTime;
         
         // Calculate earnings if hourly rate is available
-        const hourlyRate = 20; // You can make this dynamic based on user settings
+        const hourlyRate = 20; // This should come from user settings
         const totalHours = totalSeconds / 3600;
-        const totalEarned = totalHours * hourlyRate;
+        const earnings = (totalHours * hourlyRate).toFixed(2);
+        document.querySelector('.stat-card:nth-child(2) p').textContent = `$${earnings}`;
         
-        document.querySelector('.stat-card:nth-child(2) p').textContent = `$${totalEarned.toFixed(2)}`;
-        document.querySelector('.stat-card:nth-child(3) p').textContent = `$${hourlyRate.toFixed(2)}`;
-        document.querySelector('.stat-card:nth-child(4) p').textContent = allTasks.length;
+        // Update unit price
+        document.querySelector('.stat-card:nth-child(3) p').textContent = `$${hourlyRate}`;
+        
+        // Update total tasks count for the period
+        const uniqueTasks = new Set(dailyTimes.flatMap(entry => entry.tasks.map(task => task.taskId))).size;
+        document.querySelector('.stat-card:nth-child(4) p').textContent = uniqueTasks.toString();
         
     } catch (error) {
         console.error('Error loading user stats:', error);
@@ -1080,18 +1287,7 @@ async function completeTask() {
         });
 
         if (!taskResponse.ok) {
-            const errorData = await taskResponse.text();
-            let errorMessage = 'Failed to update task status';
-            try {
-                const parsedError = JSON.parse(errorData);
-                errorMessage = parsedError.error || errorMessage;
-            } catch (e) {
-                // If JSON parsing fails, use the raw error text if it's not HTML
-                if (!errorData.includes('<!DOCTYPE html>')) {
-                    errorMessage = errorData;
-                }
-            }
-            throw new Error(errorMessage);
+            throw new Error('Failed to update task status');
         }
 
         // Reset timer state
@@ -1101,11 +1297,11 @@ async function completeTask() {
         playButton.innerHTML = '<i class="fas fa-play"></i>';
         
         // Update the task status in the local arrays
-        const taskIndex = allTasks.findIndex(task => task.taskId === selectedTask.taskId);
+        const taskIndex = allTasks.findIndex(t => t.taskId === selectedTask.taskId);
         if (taskIndex !== -1) {
             allTasks[taskIndex].status = 'Completed';
             // Update filtered tasks if they exist
-            const filteredIndex = filteredTasks.findIndex(task => task.taskId === selectedTask.taskId);
+            const filteredIndex = filteredTasks.findIndex(t => t.taskId === selectedTask.taskId);
             if (filteredIndex !== -1) {
                 filteredTasks[filteredIndex].status = 'Completed';
             }
@@ -1151,15 +1347,9 @@ function showCompletionModal() {
             <svg width="165" height="165" viewBox="0 0 165 165" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M136.1 83.9C136.1 98.1 130.3 110.9 121 120.1C111.9 129.2 99.3 134.7 85.4 134.7C71.6 134.7 59 129.1 49.8 120.1C40.5 110.9 34.7 98.1 34.7 83.9C34.7 55.8 57.4 33.1 85.4 33.1C113.4 33.1 136.1 55.9 136.1 83.9Z" fill="#EAEEF9"/>
                 <path d="M131.7 50.6C133.964 50.6 135.8 48.7643 135.8 46.5C135.8 44.2356 133.964 42.4 131.7 42.4C129.436 42.4 127.6 44.2356 127.6 46.5C127.6 48.7643 129.436 50.6 131.7 50.6Z" fill="#EAEEF9"/>
-                <path d="M137.7 34.6C139.246 34.6 140.5 33.3464 140.5 31.8C140.5 30.2536 139.246 29 137.7 29C136.154 29 134.9 30.2536 134.9 31.8C134.9 33.3464 136.154 34.6 137.7 34.6Z" fill="#EAEEF9"/>
-                <path d="M36.3 50.5C37.8464 50.5 39.1 49.2464 39.1 47.7C39.1 46.1536 37.8464 44.9 36.3 44.9C34.7536 44.9 33.5 46.1536 33.5 47.7C33.5 49.2464 34.7536 50.5 36.3 50.5Z" fill="#EAEEF9"/>
-                <path d="M19.2 104.5C22.0719 104.5 24.4 102.172 24.4 99.3C24.4 96.4281 22.0719 94.1 19.2 94.1C16.3281 94.1 14 96.4281 14 99.3C14 102.172 16.3281 104.5 19.2 104.5Z" fill="#EAEEF9"/>
-                <path d="M121 57.3V120.1C111.9 129.2 99.3 134.7 85.4 134.7C71.6 134.7 59 129.1 49.8 120.1V57.3H121Z" fill="white"/>
-                <path opacity="0.5" d="M86.6578 89.3536L72.7279 75.4238L67.9903 80.1613L81.9202 94.0912L86.6578 89.3536Z" fill="#979FAF"/>
-                <path opacity="0.5" d="M98.0834 68.4989L77.2946 89.2876L82.0322 94.0252L102.821 73.2365L98.0834 68.4989Z" fill="#979FAF"/>
-                <path d="M103.6 102.6H67.2V107.2H103.6V102.6Z" fill="#D5DAE5"/>
-                <path d="M103.6 112.7H67.2V117.3H103.6V112.7Z" fill="#D5DAE5"/>
-                <path d="M94.7 122.9H76.1V127.5H94.7V122.9Z" fill="#D5DAE5"/>
+                <path d="M137.7 34.6C139.246 34.6 140.5 32.7464 140.5 30.4C140.5 28.1356 139.246 26.3 137.7 26.3C136.154 26.3 134.9 28.1356 134.9 30.4C134.9 32.6643 136.154 34.6 137.7 34.6Z" fill="#EAEEF9"/>
+                <path d="M120.827 106.839C120.827 108.093 122.08 109.639 123.627 109.639C125.173 109.639 126.427 108.386 126.427 106.839C126.427 105.293 125.173 104.039 123.627 104.039C122.08 104.039 120.827 105.293 120.827 106.839Z" fill="#EAEEF9"/>
+                <path d="M120.827 106.839C122.08 106.839 123.627 108.093 123.627 109.639C123.627 111.186 124.88 112.439 126.427 112.439C127.973 112.439 129.227 111.186 129.227 109.639C129.227 108.093 127.973 106.839 126.427 106.839Z" fill="#EAEEF9"/>
             </svg>
             <h2>Task Completed!</h2>
             <p>Great job! You've completed the task successfully.</p>
@@ -1185,12 +1375,24 @@ function closeCompletionModal() {
     }
 }
 
-// Handle window events
-window.addEventListener('beforeunload', () => {
-    if (isTracking) {
-        pauseTimer();
+// Update the electronAPI interface
+window.electronAPI = {
+    ...window.electronAPI,
+    showCloseConfirmation: () => {
+        return new Promise((resolve) => {
+            const choice = confirm('Timer is still running. Do you want to stop tracking and close the application?');
+            resolve(choice);
+        });
+    },
+    closeWindow: async () => {
+        try {
+            // Send IPC message to main process to close the window
+            await window.ipcRenderer.send('close-window');
+        } catch (error) {
+            console.error('Error closing window:', error);
+        }
     }
-}); 
+};
 
 // Update the styles
 const taskStyles = `
@@ -1228,6 +1430,21 @@ const taskStyles = `
     .priority-high {
         background-color: #FEE2E2;
         color: #DC2626;
+    }
+
+    .priority-medium {
+        background-color: #FEF3C7;
+        color: #D97706;
+    }
+
+    .priority-low {
+        background-color: #E5E7EB;
+        color: #4B5563;
+    }
+
+    .priority-overdue {
+        background-color: #7F1D1D;
+        color: #FFFFFF;
     }
 
     .status-badge {
@@ -1407,7 +1624,7 @@ function handlePaginationClick(e) {
 }
 
 // Function to update daily time
-async function updateDailyTime(taskId, seconds, title, projectName) {
+async function updateDailyTime(taskId, totalSeconds, title, projectName) {
     try {
         const userId = window.auth.getUserId();
         const token = window.auth.getToken();
@@ -1416,9 +1633,23 @@ async function updateDailyTime(taskId, seconds, title, projectName) {
             throw new Error('User not authenticated');
         }
 
+        // Calculate the new session time by subtracting the existing time
+        let existingSeconds = 0;
+        if (selectedTask && selectedTask.timing?.timeLogged) {
+            const timeMatch = selectedTask.timing.timeLogged.match(/(\d+)h\s*(\d+)m/);
+            if (timeMatch) {
+                const hours = parseInt(timeMatch[1]) || 0;
+                const minutes = parseInt(timeMatch[2]) || 0;
+                existingSeconds = (hours * 3600) + (minutes * 60);
+            }
+        }
+
+        // Calculate only the new time tracked in this session
+        const newSessionSeconds = Math.max(0, totalSeconds - existingSeconds);
+
         const today = new Date().toISOString().split('T')[0];
 
-        // First update the daily time
+        // Update daily time with only the new session time
         const response = await fetch('https://actracker.onrender.com/api/daily-time/update', {
             method: 'POST',
             headers: {
@@ -1429,7 +1660,7 @@ async function updateDailyTime(taskId, seconds, title, projectName) {
                 userId,
                 date: today,
                 taskId: taskId || 'default',
-                seconds: seconds || 0,
+                seconds: newSessionSeconds, // Only send the new session time
                 title: title || 'Untitled Task',
                 projectName: projectName || 'Default Project'
             })
@@ -1440,12 +1671,12 @@ async function updateDailyTime(taskId, seconds, title, projectName) {
             throw new Error(errorData.error || 'Failed to update daily time');
         }
 
-        // Then update the task's time logged if we have a taskId
+        // Update task's total time logged
         if (taskId) {
             try {
-                // Calculate time logged
-                const hours = Math.floor(seconds / 3600);
-                const minutes = Math.floor((seconds % 3600) / 60);
+                // Use total elapsed time for the task's time logged
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
                 const timeLogged = `${hours}h ${minutes}m`;
 
                 const taskResponse = await fetch(`${config.API_BASE_URL}/api/tasks/${taskId}`, {
@@ -1465,39 +1696,21 @@ async function updateDailyTime(taskId, seconds, title, projectName) {
                     throw new Error('Failed to update task time logged');
                 }
 
-                // Update local task data if it exists
-                const taskIndex = allTasks.findIndex(t => t.taskId === taskId);
-                if (taskIndex !== -1) {
-                    allTasks[taskIndex].timing = {
-                        ...allTasks[taskIndex].timing,
+                // Update local task data
+                if (selectedTask) {
+                    selectedTask.timing = {
+                        ...selectedTask.timing,
                         timeLogged: timeLogged
                     };
-
-                    // Update filtered tasks if they exist
-                    const filteredIndex = filteredTasks.findIndex(t => t.taskId === taskId);
-                    if (filteredIndex !== -1) {
-                        filteredTasks[filteredIndex].timing = {
-                            ...filteredTasks[filteredIndex].timing,
-                            timeLogged: timeLogged
-                        };
-                    }
-
-                    // Only re-render if we have tasks to show
-                    if (allTasks.length > 0) {
-                        renderTasks(filteredTasks.length ? filteredTasks : allTasks);
-                    }
+                    updateTaskInArrays(selectedTask);
                 }
             } catch (error) {
                 console.error('Error updating task time:', error);
-                // Continue execution even if task update fails
             }
         }
 
         const data = await response.json();
-        console.log('Daily time updated successfully:', data);
-        
         await loadUserStats();
-        
         return data;
     } catch (error) {
         console.error('Error updating daily time:', error);
@@ -1535,5 +1748,222 @@ function setupRecurringTaskFields() {
                 untilDateInput.value = '';
             }
         });
+    }
+}
+
+function formatTime(hours, minutes, seconds) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Add these new filter-related functions
+function openFilterModal() {
+    const filterModal = document.getElementById('filter-modal');
+    const filterOverlay = document.getElementById('filter-overlay');
+    const filterIcon = document.getElementById('filter-icon');
+    
+    filterModal.classList.add('active');
+    filterOverlay.classList.add('active');
+    filterIcon.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    
+    // Populate dynamic content
+    populateAssigneeFilter();
+    populateProjectFilter();
+    
+    // Set current filter values
+    setCurrentFilterValues();
+}
+
+function closeFilterModal() {
+    const filterModal = document.getElementById('filter-modal');
+    const filterOverlay = document.getElementById('filter-overlay');
+    const filterIcon = document.getElementById('filter-icon');
+    
+    filterModal.classList.remove('active');
+    filterOverlay.classList.remove('active');
+    filterIcon.classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+function clearFilters() {
+    // Reset all checkboxes and selections
+    document.querySelectorAll('.filter-option input[type="checkbox"]').forEach(checkbox => {
+        checkbox.checked = false;
+        checkbox.closest('.filter-option').classList.remove('selected');
+    });
+    
+    document.querySelectorAll('.avatar-filter .avatar').forEach(avatar => {
+        avatar.classList.remove('selected');
+    });
+    
+    document.getElementById('filter-start-date').value = '';
+    document.getElementById('filter-due-date').value = '';
+    
+    // Reset active filters
+    activeFilters = {
+        assignees: [],
+        status: [],
+        priority: [],
+        projects: [],
+        dateRange: {
+            start: null,
+            end: null
+        }
+    };
+    
+    // Update tasks display
+    filterTasks();
+}
+
+function applyFilters() {
+    // Collect filter values
+    activeFilters.status = Array.from(document.querySelectorAll('#status-filter input:checked'))
+        .map(checkbox => checkbox.closest('.filter-option').dataset.status);
+    
+    activeFilters.priority = Array.from(document.querySelectorAll('#priority-filter input:checked'))
+        .map(checkbox => checkbox.closest('.filter-option').dataset.priority);
+    
+    activeFilters.projects = Array.from(document.querySelectorAll('#project-filter input:checked'))
+        .map(checkbox => checkbox.closest('.filter-option').dataset.project);
+    
+    activeFilters.assignees = Array.from(document.querySelectorAll('.avatar-filter .avatar.selected'))
+        .map(avatar => avatar.dataset.userId);
+    
+    activeFilters.dateRange = {
+        start: document.getElementById('filter-start-date').value,
+        end: document.getElementById('filter-due-date').value
+    };
+    
+    // Apply filters and close modal
+    filterTasks();
+    closeFilterModal();
+}
+
+function filterTasks() {
+    filteredTasks = allTasks.filter(task => {
+        // Status filter
+        if (activeFilters.status.length && !activeFilters.status.includes(task.status)) {
+            return false;
+        }
+        
+        // Priority filter
+        if (activeFilters.priority.length && !activeFilters.priority.includes(task.priority)) {
+            return false;
+        }
+        
+        // Project filter
+        if (activeFilters.projects.length && !activeFilters.projects.includes(task.project?.projectId)) {
+            return false;
+        }
+        
+        // Assignee filter
+        if (activeFilters.assignees.length && !activeFilters.assignees.includes(task.assignee?.userId)) {
+            return false;
+        }
+        
+        // Date range filter
+        if (activeFilters.dateRange.start && new Date(task.timing?.startDate) < new Date(activeFilters.dateRange.start)) {
+            return false;
+        }
+        if (activeFilters.dateRange.end && new Date(task.timing?.dueDate) > new Date(activeFilters.dateRange.end)) {
+            return false;
+        }
+        
+        return true;
+    });
+    
+    currentPage = 1; // Reset to first page
+    renderTasks(filteredTasks);
+}
+
+async function populateAssigneeFilter() {
+    try {
+        const response = await fetch(`${config.API_BASE_URL}/api/users`, {
+            headers: {
+                'Authorization': `Bearer ${window.auth.getToken()}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to load users');
+        }
+        
+        const users = await response.json();
+        const assigneeFilter = document.getElementById('assignee-filter');
+        
+        assigneeFilter.innerHTML = users.map(user => `
+            <div class="avatar ${activeFilters.assignees.includes(user.userId) ? 'selected' : ''}"
+                 data-user-id="${user.userId}"
+                 title="${user.name}">
+                ${user.name.charAt(0).toUpperCase()}
+            </div>
+        `).join('');
+        
+        // Add click handlers
+        assigneeFilter.querySelectorAll('.avatar').forEach(avatar => {
+            avatar.addEventListener('click', () => {
+                avatar.classList.toggle('selected');
+            });
+        });
+        
+    } catch (error) {
+        console.error('Error loading users:', error);
+    }
+}
+
+async function populateProjectFilter() {
+    try {
+        const projects = await loadProjects();
+        const projectFilter = document.getElementById('project-filter');
+        
+        projectFilter.innerHTML = projects.map(project => `
+            <div class="filter-option" data-project="${project._id}">
+                <input type="checkbox" id="project-${project._id}"
+                       ${activeFilters.projects.includes(project._id) ? 'checked' : ''}>
+                <label for="project-${project._id}">${project.projectName}</label>
+            </div>
+        `).join('');
+        
+        // Add click handlers
+        projectFilter.querySelectorAll('.filter-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const checkbox = option.querySelector('input[type="checkbox"]');
+                if (e.target !== checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                }
+                option.classList.toggle('selected', checkbox.checked);
+            });
+        });
+        
+    } catch (error) {
+        console.error('Error loading projects:', error);
+    }
+}
+
+function setCurrentFilterValues() {
+    // Set status checkboxes
+    activeFilters.status.forEach(status => {
+        const checkbox = document.querySelector(`#status-filter [data-status="${status}"] input`);
+        if (checkbox) {
+            checkbox.checked = true;
+            checkbox.closest('.filter-option').classList.add('selected');
+        }
+    });
+    
+    // Set priority checkboxes
+    activeFilters.priority.forEach(priority => {
+        const checkbox = document.querySelector(`#priority-filter [data-priority="${priority}"] input`);
+        if (checkbox) {
+            checkbox.checked = true;
+            checkbox.closest('.filter-option').classList.add('selected');
+        }
+    });
+    
+    // Set date range
+    if (activeFilters.dateRange.start) {
+        document.getElementById('filter-start-date').value = activeFilters.dateRange.start;
+    }
+    if (activeFilters.dateRange.end) {
+        document.getElementById('filter-due-date').value = activeFilters.dateRange.end;
     }
 }
